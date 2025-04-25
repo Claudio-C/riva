@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NVIDIA Riva Speech Recognition Demo</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>NVIDIA Riva Speech Recognition Demo</h1>
+        
+        <div class="section">
+            <h2>Upload Audio File</h2>
+            <form id="uploadForm" enctype="multipart/form-data">
+                <input type="file" id="audioFile" name="audio" accept="audio/*">
+                <button type="submit">Transcribe</button>
+            </form>
+            <div id="uploadResult" class="result"></div>
+        </div>
+        
+        <div class="section">
+            <h2>Live Transcription</h2>
+            <button id="startRecording">Start Recording</button>
+            <button id="stopRecording" disabled>Stop Recording</button>
+            <div id="liveResult" class="result"></div>
+        </div>
+    </div>
+    
+    <script src="{{ url_for('static', filename='js/audio_recorder.js') }}"></script>
+</body>
+</html>

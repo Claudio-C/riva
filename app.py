@@ -1,142 +1,167 @@
+from flask import Flask, render_template, request, jsonify, Response, stream_with_context
 import os
-from flask import Flask, request, jsonify, render_template_string
-from nvidia_riva.client import ASRService
-from nvidia_riva.client.audio_io import AudioChunkFileStream
+import tempfile
+import uuid
+import threading
+import json
+import time
+from riva_client import RivaClient
 
+app = Flask(__name__, static_folder='static', template_folder='templates')
+
+# SSL certificate paths
 SSL_CERT_FILE = "/etc/letsencrypt/live/avatar.ligagc.com/fullchain.pem"
 SSL_KEY_FILE = "/etc/letsencrypt/live/avatar.ligagc.com/privkey.pem"
 
+# Riva client configuration
 RIVA_SERVER = "localhost:50051"  # Default Riva server address
+riva_client = RivaClient(RIVA_SERVER)
 
-app = Flask(__name__)
+# Store active streaming sessions
+active_sessions = {}
 
-# Initialize Riva ASR client
-asr_service = ASRService(
-    riva_uri=RIVA_SERVER,
-    ssl_cert=None,  # Not needed for localhost unless Riva is using SSL
-)
-
-HTML_FORM = """
-<!doctype html>
-<title>NVIDIA Riva ASR Demo</title>
-<h2>Upload or Record Audio (16kHz WAV, PCM)</h2>
-<form id="uploadForm" method=post enctype=multipart/form-data>
-  <input type=file name=audio accept="audio/wav">
-  <input type=submit value=Transcribe>
-</form>
-<br>
-<button id="recordBtn">Record</button>
-<button id="stopBtn" disabled>Stop</button>
-<audio id="audioPlayback" controls style="display:none"></audio>
-<script>
-let mediaRecorder;
-let audioChunks = [];
-const recordBtn = document.getElementById('recordBtn');
-const stopBtn = document.getElementById('stopBtn');
-const audioPlayback = document.getElementById('audioPlayback');
-const uploadForm = document.getElementById('uploadForm');
-
-recordBtn.onclick = async function(e) {
-  e.preventDefault();
-  audioChunks = [];
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  mediaRecorder = new MediaRecorder(stream);
-  mediaRecorder.start();
-  recordBtn.disabled = true;
-  stopBtn.disabled = false;
-  mediaRecorder.ondataavailable = e => {
-    if (e.data.size > 0) audioChunks.push(e.data);
-  };
-  mediaRecorder.onstop = e => {
-    const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
-    audioPlayback.src = URL.createObjectURL(audioBlob);
-    audioPlayback.style.display = 'block';
-    // Auto-upload after recording
-    const formData = new FormData();
-    formData.append('audio', audioBlob, 'recording.wav');
-    fetch('/', { method: 'POST', body: formData })
-      .then(response => response.text())
-      .then(html => document.documentElement.innerHTML = html);
-  };
-};
-
-stopBtn.onclick = function(e) {
-  e.preventDefault();
-  mediaRecorder.stop();
-  recordBtn.disabled = false;
-  stopBtn.disabled = true;
-};
-</script>
-{% if transcript is defined %}
-  <h3>Transcript:</h3>
-  <pre>{{ transcript }}</pre>
-{% endif %}
-"""
-
-@app.route('/', methods=['GET', 'POST'])
+@app.route('/')
 def index():
-    transcript = None
-    if request.method == 'POST':
-        if 'audio' not in request.files:
-            transcript = 'No audio file provided'
-        else:
-            audio_file = request.files['audio']
-            audio_path = '/tmp/' + audio_file.filename
-            audio_file.save(audio_path)
-            with AudioChunkFileStream(audio_path, chunk_size=16000) as stream:
-                responses = asr_service.streaming_recognize(
-                    audio_chunks=stream,
-                    config={
-                        "language_code": "en-US",
-                        "sample_rate_hertz": 16000,
-                        "encoding": "LINEAR_PCM",
-                        "max_alternatives": 1,
-                        "interim_results": False,
-                        "automatic_punctuation": True,
-                    }
-                )
-                transcript = ""
-                for response in responses:
-                    for result in response.results:
-                        if result.alternatives:
-                            transcript += result.alternatives[0].transcript
-            os.remove(audio_path)
-    return render_template_string(HTML_FORM, transcript=transcript)
+    """Render the main page."""
+    return render_template('index.html')
 
 @app.route('/transcribe', methods=['POST'])
 def transcribe():
+    """Transcribe uploaded audio file."""
     if 'audio' not in request.files:
-        return jsonify({'error': 'No audio file provided'}), 400
-
+        return jsonify({'error': 'No audio file uploaded'}), 400
+    
     audio_file = request.files['audio']
-    audio_path = '/tmp/' + audio_file.filename
-    audio_file.save(audio_path)
+    
+    # Save the uploaded file temporarily
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp_file:
+        tmp_filename = tmp_file.name
+        audio_file.save(tmp_filename)
+    
+    try:
+        # Process audio file in chunks to simulate streaming
+        def audio_chunks():
+            chunk_size = 4096  # 4KB chunks
+            with open(tmp_filename, 'rb') as f:
+                while True:
+                    chunk = f.read(chunk_size)
+                    if not chunk:
+                        break
+                    yield chunk
+        
+        # Get sample rate from request or use default
+        sample_rate = int(request.form.get('sample_rate', 16000))
+        
+        # Get transcription
+        results = []
+        final_text = ""
+        
+        for result in riva_client.transcribe_stream(
+            audio_chunks(), 
+            sample_rate_hz=sample_rate
+        ):
+            if result['is_final']:
+                final_text = result['transcript']
+                results.append(final_text)
+        
+        return jsonify({'transcription': ' '.join(results) if results else final_text})
+    
+    finally:
+        # Clean up temporary file
+        if os.path.exists(tmp_filename):
+            os.unlink(tmp_filename)
 
-    # Stream audio to Riva ASR
-    with AudioChunkFileStream(audio_path, chunk_size=16000) as stream:
-        responses = asr_service.streaming_recognize(
-            audio_chunks=stream,
-            config={
-                "language_code": "en-US",
-                "sample_rate_hertz": 16000,
-                "encoding": "LINEAR_PCM",
-                "max_alternatives": 1,
-                "interim_results": False,
-                "automatic_punctuation": True,
-            }
-        )
-        transcript = ""
-        for response in responses:
-            for result in response.results:
-                if result.alternatives:
-                    transcript += result.alternatives[0].transcript
+@app.route('/stream_start', methods=['POST'])
+def stream_start():
+    """Initialize a streaming session."""
+    session_id = str(uuid.uuid4())
+    
+    # Store session info
+    active_sessions[session_id] = {
+        'created_at': time.time(),
+        'audio_chunks': [],
+        'results': [],
+        'complete': False
+    }
+    
+    return jsonify({'session_id': session_id})
 
-    os.remove(audio_path)
-    return jsonify({'transcript': transcript})
+@app.route('/stream_audio/<session_id>', methods=['POST'])
+def stream_audio(session_id):
+    """Add audio chunk to an existing streaming session."""
+    if session_id not in active_sessions:
+        return jsonify({'error': 'Invalid session ID'}), 400
+    
+    if not request.data:
+        return jsonify({'error': 'No audio data received'}), 400
+    
+    session = active_sessions[session_id]
+    session['audio_chunks'].append(request.data)
+    
+    # Get sample rate from query params or use default
+    sample_rate = int(request.args.get('sample_rate', 16000))
+    
+    # Process in separate thread to avoid blocking
+    def process_audio():
+        def audio_stream():
+            yield request.data
+        
+        try:
+            for result in riva_client.transcribe_stream(audio_stream(), sample_rate_hz=sample_rate):
+                if session_id in active_sessions:  # Check if session still exists
+                    session = active_sessions[session_id]
+                    session['results'].append(result)
+        except Exception as e:
+            print(f"Error in stream processing: {e}")
+    
+    # Start processing thread
+    threading.Thread(target=process_audio).start()
+    
+    # Return the latest results we have so far
+    latest_results = [r['transcript'] for r in session['results'] if r['is_final']]
+    if not latest_results and session['results']:
+        # Return the latest interim result if no final results yet
+        latest_results = [session['results'][-1]['transcript']]
+    
+    return jsonify({
+        'transcription': ' '.join(latest_results) if latest_results else '',
+        'is_final': any(r['is_final'] for r in session['results']) if session['results'] else False
+    })
+
+@app.route('/stream_stop/<session_id>', methods=['POST'])
+def stream_stop(session_id):
+    """Finalize a streaming session and get the complete transcription."""
+    if session_id not in active_sessions:
+        return jsonify({'error': 'Invalid session ID'}), 400
+    
+    session = active_sessions[session_id]
+    session['complete'] = True
+    
+    # Get final transcription
+    final_results = [r['transcript'] for r in session['results'] if r['is_final']]
+    final_transcription = ' '.join(final_results) if final_results else ''
+    
+    # Cleanup session after a delay to allow final results to be retrieved
+    def cleanup_session():
+        time.sleep(60)  # Keep session for 1 minute
+        if session_id in active_sessions:
+            del active_sessions[session_id]
+    
+    threading.Thread(target=cleanup_session).start()
+    
+    return jsonify({'final_transcription': final_transcription})
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Simple health check endpoint."""
+    return jsonify({'status': 'healthy'})
 
 if __name__ == '__main__':
-    app.run(
-        host='0.0.0.0',
-        port=8443,
-        ssl_context=(SSL_CERT_FILE, SSL_KEY_FILE)
-    )
+    # Check if SSL certificates exist
+    if os.path.exists(SSL_CERT_FILE) and os.path.exists(SSL_KEY_FILE):
+        # Run with SSL
+        app.run(host='0.0.0.0', port=5000, ssl_context=(SSL_CERT_FILE, SSL_KEY_FILE))
+    else:
+        # Run without SSL (for development)
+        print("Warning: SSL certificates not found. Running without SSL (not secure).")
+        app.run(host='0.0.0.0', port=5000)

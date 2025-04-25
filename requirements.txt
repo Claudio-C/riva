@@ -1,2 +1,7 @@
-Flask
-nvidia-riva-client==2.19.0
+flask==2.0.1
+grpcio==1.41.0
+grpcio-tools==1.41.0
+numpy==1.21.3
+python-multipart==0.0.5
+webrtcvad==2.0.10
+pydub==0.25.1
