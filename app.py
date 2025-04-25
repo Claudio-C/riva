@@ -1,96 +1,134 @@
 import os
-from flask import Flask, request, jsonify, render_template, Response
+from flask import Flask, render_template, request, jsonify, Response
 import riva.client
-import riva.client.audio_io
+from riva.client.auth import Auth
+from riva.client.asr import ASRService
+from riva.client.tts import SpeechSynthesisService
+from io import BytesIO
 
 app = Flask(__name__)
 
-# Riva configuration
-RIVA_API_URL = "localhost:50051"  # Default Riva server address
-RIVA_CLIENT = None
-
-# SSL Configuration
+# SSL certificate paths
 SSL_CERT_FILE = "/etc/letsencrypt/live/avatar.ligagc.com/fullchain.pem"
 SSL_KEY_FILE = "/etc/letsencrypt/live/avatar.ligagc.com/privkey.pem"
 
-def get_riva_client():
-    global RIVA_CLIENT
-    if RIVA_CLIENT is None:
-        RIVA_CLIENT = riva.client.RivaClient(RIVA_API_URL)
-    return RIVA_CLIENT
+# Riva client configuration
+RIVA_API_URL = "localhost:50051"  # Default Riva API endpoint
+
+# Initialize Riva client
+auth = Auth(uri=RIVA_API_URL, use_ssl=False)  # Set to True if Riva server uses SSL
 
 @app.route('/')
 def index():
     return render_template('index.html')
 
-@app.route('/asr-stream', methods=['POST'])
-def asr_stream():
-    """Endpoint for streaming ASR"""
-    client = get_riva_client()
+@app.route('/asr', methods=['POST'])
+def speech_to_text():
+    if 'audio' not in request.files:
+        return jsonify({'error': 'No audio file provided'}), 400
     
-    # Configure ASR streaming
-    config = riva.client.ASRConfig()
-    config.enable_automatic_punctuation = True
-    config.language_code = "en-US"  # Change as needed
+    audio_file = request.files['audio']
+    if audio_file.filename == '':
+        return jsonify({'error': 'No audio file selected'}), 400
     
-    # Start streaming ASR session
-    def generate():
-        # Create ASR stream
-        asr_service = client.streaming_asr(config)
-        
-        # Process incoming audio chunks
-        for chunk in request.stream:
-            resp = asr_service.send(chunk)
-            
-            # If we have results, return them
-            if resp and resp.results:
-                for result in resp.results:
-                    if result.alternatives:
-                        text = result.alternatives[0].transcript
-                        is_final = result.is_final
-                        yield f'data: {{"text": "{text}", "is_final": {str(is_final).lower()}}}\n\n'
-        
-        # Finish the stream
-        final_resp = asr_service.finish()
-        if final_resp and final_resp.results:
-            for result in final_resp.results:
-                if result.alternatives:
-                    text = result.alternatives[0].transcript
-                    yield f'data: {{"text": "{text}", "is_final": true}}\n\n'
+    # Create ASR service
+    asr_service = ASRService(auth)
     
-    return Response(generate(), mimetype='text/event-stream')
+    # Configure ASR parameters for streaming
+    config = riva.client.StreamingRecognitionConfig(
+        config=riva.client.RecognitionConfig(
+            encoding=riva.client.AudioEncoding.LINEAR_PCM,
+            sample_rate_hertz=16000,
+            language_code="en-US",
+            max_alternatives=1,
+            profanity_filter=False,
+            enable_automatic_punctuation=True,
+            verbatim_transcripts=False,
+        )
+    )
+    
+    # Read audio data
+    audio_data = audio_file.read()
+    
+    # Process audio in streaming mode
+    responses = []
+    for response in asr_service.streaming_recognize(config=config, audio_generator=[audio_data]):
+        for result in response.results:
+            if result.is_final:
+                transcription = result.alternatives[0].transcript
+                confidence = result.alternatives[0].confidence
+                responses.append({
+                    "transcript": transcription,
+                    "confidence": confidence
+                })
+    
+    return jsonify({
+        'success': True,
+        'results': responses
+    })
 
 @app.route('/tts', methods=['POST'])
-def tts():
-    """Endpoint for text-to-speech"""
-    client = get_riva_client()
-    
+def text_to_speech():
     data = request.json
-    text = data.get('text', '')
-    voice_name = data.get('voice', 'English-US.Female-1')
+    if not data or 'text' not in data:
+        return jsonify({'error': 'No text provided'}), 400
+
+    text = data['text']
+    voice = data.get('voice', 'English-US-Female-1')
     
-    # Configure TTS request
-    req = riva.client.TTSRequest()
-    req.text = text
-    req.language_code = "en-US"  # Change as needed
-    req.encoding = riva.client.AudioEncoding.LINEAR_PCM
-    req.sample_rate_hz = 44100
-    req.voice_name = voice_name
+    # Create TTS service
+    tts_service = SpeechSynthesisService(auth)
     
-    # Stream audio chunks
+    try:
+        # Use streaming synthesis
+        audio_chunks = []
+        responses = tts_service.synthesize(
+            text,
+            voice_name=voice,
+            sample_rate_hz=22050
+        )
+        
+        for response in responses:
+            audio_chunks.append(response.audio)
+        
+        audio_data = b''.join(audio_chunks)
+        
+        # Return audio as response
+        return Response(audio_data, mimetype='audio/wav')
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/tts-stream', methods=['POST'])
+def text_to_speech_stream():
+    data = request.json
+    if not data or 'text' not in data:
+        return jsonify({'error': 'No text provided'}), 400
+
+    text = data['text']
+    voice = data.get('voice', 'English-US-Female-1')
+    
+    # Create TTS service
+    tts_service = SpeechSynthesisService(auth)
+    
     def generate():
-        for resp in client.synthesize_online(req):
-            yield resp.audio
+        try:
+            responses = tts_service.synthesize(
+                text,
+                voice_name=voice,
+                sample_rate_hz=22050
+            )
+            
+            for response in responses:
+                yield response.audio
+        except Exception as e:
+            print(f"Error in TTS streaming: {e}")
     
     return Response(generate(), mimetype='audio/wav')
 
-@app.route('/available-voices', methods=['GET'])
-def available_voices():
-    """Get available TTS voices"""
-    client = get_riva_client()
-    voices = client.get_available_voices()
-    return jsonify(voices)
-
 if __name__ == '__main__':
-    context = (SSL_CERT_FILE, SSL_KEY_FILE)
-    app.run(host='0.0.0.0', port=5000, ssl_context=context, debug=True)
+    app.run(
+        host='0.0.0.0',
+        port=5000,
+        ssl_context=(SSL_CERT_FILE, SSL_KEY_FILE),
+        debug=True
+    )
