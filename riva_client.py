@@ -218,7 +218,13 @@ class RivaClient:
                     
                     # None is our signal to end the stream
                     if chunk is None:
+                        print("Received end signal in audio generator")
                         break
+                        
+                    # Skip empty chunks
+                    if not chunk or len(chunk) == 0:
+                        audio_queue.task_done()
+                        continue
                         
                     # Yield the audio chunk
                     yield rasr.StreamingRecognizeRequest(audio_content=chunk)
@@ -232,8 +238,11 @@ class RivaClient:
                 except Exception as e:
                     print(f"Error in audio generator: {e}")
                     break
+            
+            print("Audio generator finished")
         
         try:
+            print("Starting streaming recognition session")
             # Start the streaming recognition
             responses = self.asr_client.StreamingRecognize(audio_generator())
             
@@ -246,6 +255,8 @@ class RivaClient:
                             'is_final': result.is_final,
                             'timestamp': time.time()
                         })
+                        
+            print("Streaming recognition completed")
         except Exception as e:
             print(f"Error in streaming session: {e}")
             results_queue.put({

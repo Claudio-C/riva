@@ -116,10 +116,13 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!sessionId) return;
         
         try {
-            await fetch(`/stream_audio/${sessionId}?sample_rate=16000`, {
-                method: 'POST',
-                body: audioChunk
-            });
+            // Only send if there's actual audio data
+            if (audioChunk && audioChunk.byteLength > 0) {
+                await fetch(`/stream_audio/${sessionId}?sample_rate=16000`, {
+                    method: 'POST',
+                    body: audioChunk
+                });
+            }
         } catch (error) {
             console.error('Error sending audio chunk:', error);
         }
@@ -130,10 +133,19 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!sessionId) return;
         
         try {
+            // Send an empty POST request to get latest results without sending audio
             const response = await fetch(`/stream_audio/${sessionId}?sample_rate=16000`, {
                 method: 'POST',
-                body: new Uint8Array(0) // Empty request to get latest results without sending audio
+                headers: {
+                    'Content-Type': 'application/octet-stream',
+                    'Content-Length': '0'
+                }
             });
+            
+            if (!response.ok) {
+                console.error('Error getting results:', response.status);
+                return;
+            }
             
             const data = await response.json();
             if (data.transcription) {

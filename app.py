@@ -139,17 +139,18 @@ def stream_audio(session_id):
     if session_id not in active_sessions:
         return jsonify({'error': 'Invalid session ID'}), 400
     
-    if not request.data:
-        return jsonify({'error': 'No audio data received'}), 400
-    
     session = active_sessions[session_id]
     
-    # Add audio chunk to the queue for processing
-    try:
-        session['audio_queue'].put(request.data)
-    except Exception as e:
-        print(f"Error queuing audio chunk: {e}")
-        return jsonify({'error': f'Failed to process audio: {str(e)}'}), 500
+    # Check for data - handle empty requests as result polling
+    is_polling = not request.data or len(request.data) == 0
+    
+    # Only add audio to queue if there's actual data
+    if not is_polling:
+        try:
+            session['audio_queue'].put(request.data)
+        except Exception as e:
+            print(f"Error queuing audio chunk: {e}")
+            return jsonify({'error': f'Failed to process audio: {str(e)}'}), 500
     
     # Collect any new results
     try:
@@ -162,13 +163,15 @@ def stream_audio(session_id):
     
     # Return the latest results
     latest_results = [r['transcript'] for r in session['results'] if r.get('is_final', False)]
+    
+    # If no final results, get latest interim result
     if not latest_results and session['results']:
-        # Return the latest interim result if no final results yet
         latest_results = [session['results'][-1]['transcript']]
     
     return jsonify({
         'transcription': ' '.join(latest_results) if latest_results else '',
-        'is_final': any(r.get('is_final', False) for r in session['results']) if session['results'] else False
+        'is_final': any(r.get('is_final', False) for r in session['results']) if session['results'] else False,
+        'num_results': len(session['results'])
     })
 
 @app.route('/stream_stop/<session_id>', methods=['POST'])
