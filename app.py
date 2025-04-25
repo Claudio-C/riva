@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify, Response, stream_with_context
+from flask import Flask, render_template, request, jsonify, Response, stream_with_context, redirect, url_for
 import os
 import tempfile
 import uuid
@@ -10,9 +10,22 @@ from riva_client import RivaClient
 
 app = Flask(__name__, static_folder='static', template_folder='templates')
 
-# SSL certificate paths
-SSL_CERT_FILE = "/etc/letsencrypt/live/avatar.ligagc.com/fullchain.pem"
-SSL_KEY_FILE = "/etc/letsencrypt/live/avatar.ligagc.com/privkey.pem"
+# SSL certificate paths - add alternative paths as fallbacks
+SSL_CERT_PATHS = [
+    "/etc/letsencrypt/live/avatar.ligagc.com/fullchain.pem",
+    "/etc/ssl/certs/avatar.ligagc.com/fullchain.pem",
+    "/home/ia/certs/fullchain.pem"
+]
+
+SSL_KEY_PATHS = [
+    "/etc/letsencrypt/live/avatar.ligagc.com/privkey.pem",
+    "/etc/ssl/private/avatar.ligagc.com/privkey.pem",
+    "/home/ia/certs/privkey.pem"
+]
+
+# Find the first valid certificate path
+SSL_CERT_FILE = next((path for path in SSL_CERT_PATHS if os.path.exists(path)), SSL_CERT_PATHS[0])
+SSL_KEY_FILE = next((path for path in SSL_KEY_PATHS if os.path.exists(path)), SSL_KEY_PATHS[0])
 
 # Riva client configuration
 RIVA_SERVER = "localhost:50051"  # Default Riva server address
@@ -155,21 +168,64 @@ def stream_stop(session_id):
 @app.route('/health', methods=['GET'])
 def health_check():
     """Simple health check endpoint."""
-    return jsonify({'status': 'healthy', 'server': 'Riva Flask API'})
+    cert_exists = os.path.exists(SSL_CERT_FILE)
+    key_exists = os.path.exists(SSL_KEY_FILE)
+    
+    return jsonify({
+        'status': 'healthy', 
+        'server': 'Riva Flask API',
+        'ssl': {
+            'cert_path': SSL_CERT_FILE,
+            'cert_exists': cert_exists,
+            'key_path': SSL_KEY_FILE,
+            'key_exists': key_exists
+        }
+    })
+
+@app.route('/ssl-check')
+def ssl_check():
+    """Endpoint to check SSL configuration."""
+    cert_exists = os.path.exists(SSL_CERT_FILE)
+    key_exists = os.path.exists(SSL_KEY_FILE)
+    
+    return jsonify({
+        'ssl_configured': cert_exists and key_exists,
+        'cert_file': SSL_CERT_FILE,
+        'cert_exists': cert_exists,
+        'key_file': SSL_KEY_FILE,
+        'key_exists': key_exists,
+        'checked_cert_paths': SSL_CERT_PATHS,
+        'checked_key_paths': SSL_KEY_PATHS
+    })
 
 def check_ssl_config():
     """Check if SSL certificates exist and are valid."""
-    if not os.path.exists(SSL_CERT_FILE) or not os.path.exists(SSL_KEY_FILE):
-        print(f"Warning: SSL certificates not found at {SSL_CERT_FILE} and {SSL_KEY_FILE}")
+    if not os.path.exists(SSL_CERT_FILE):
+        print(f"Warning: SSL certificate not found at {SSL_CERT_FILE}")
+        print(f"Checked paths: {SSL_CERT_PATHS}")
+        print("Running without SSL (not secure).")
+        return False
+    
+    if not os.path.exists(SSL_KEY_FILE):
+        print(f"Warning: SSL key not found at {SSL_KEY_FILE}")
+        print(f"Checked paths: {SSL_KEY_PATHS}")
         print("Running without SSL (not secure).")
         return False
     
     try:
-        # Try to load the certificates to validate them
-        ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-        ssl_context.load_cert_chain(certfile=SSL_CERT_FILE, keyfile=SSL_KEY_FILE)
-        print("SSL certificates loaded successfully.")
-        return True
+        # Try to create an SSL context with the certificates
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(certfile=SSL_CERT_FILE, keyfile=SSL_KEY_FILE)
+        
+        # Print certificate details for debugging
+        with open(SSL_CERT_FILE, 'r') as f:
+            cert_content = f.read()
+            print(f"Certificate details: {cert_content[:100]}...")
+        
+        print(f"SSL certificates loaded successfully from:")
+        print(f"  - Certificate: {SSL_CERT_FILE}")
+        print(f"  - Private key: {SSL_KEY_FILE}")
+        return context
     except Exception as e:
         print(f"Error loading SSL certificates: {e}")
         print("Running without SSL (not secure).")
@@ -177,12 +233,13 @@ def check_ssl_config():
 
 if __name__ == '__main__':
     # Create a proper SSL context if certificates exist
-    ssl_available = check_ssl_config()
+    ssl_context = check_ssl_config()
     
-    if ssl_available:
+    if ssl_context:
         # Run with SSL
-        context = (SSL_CERT_FILE, SSL_KEY_FILE)
-        app.run(host='0.0.0.0', port=5000, ssl_context=context)
+        print("Starting Flask app with SSL on port 5000")
+        app.run(host='0.0.0.0', port=5000, ssl_context=ssl_context)
     else:
         # Run without SSL
+        print("Starting Flask app WITHOUT SSL on port 5000")
         app.run(host='0.0.0.0', port=5000)
