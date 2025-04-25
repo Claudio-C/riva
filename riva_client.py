@@ -4,13 +4,34 @@ import time
 import threading
 import os
 import sys
+import glob
 from typing import Generator, List, Optional
 
-# Add the parent directory to the Python path
+# Add current directory to Python path
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, current_dir)
 
-# Create __init__.py files to make the directories proper Python packages
+# Helper function to find proto files
+def find_proto_files():
+    """Find and print location of generated proto files"""
+    search_paths = [
+        current_dir,
+        os.path.join(current_dir, "riva", "proto"),
+        os.path.join(current_dir, "riva"),
+    ]
+    
+    for search_path in search_paths:
+        proto_files = glob.glob(os.path.join(search_path, "*pb2*.py"))
+        if proto_files:
+            print(f"Found proto files in {search_path}:")
+            for file in proto_files:
+                print(f"  - {os.path.basename(file)}")
+            return search_path
+    
+    print("No proto files found!")
+    return None
+
+# Create __init__.py files for proper package structure
 for pkg_dir in ["riva", "riva/proto"]:
     init_file = os.path.join(current_dir, pkg_dir, "__init__.py")
     if not os.path.exists(init_file):
@@ -18,38 +39,68 @@ for pkg_dir in ["riva", "riva/proto"]:
         with open(init_file, "w") as f:
             pass
 
-# Now try to import the generated modules
+# Find where the proto files are actually located
+proto_path = find_proto_files()
+if proto_path:
+    sys.path.insert(0, proto_path)
+
+# Try different import strategies
+rasr = rasr_srv = ra = None
+import_success = False
+
+# First strategy: standard import from package
 try:
+    print("Trying import from riva.proto package...")
     from riva.proto import riva_asr_pb2 as rasr
     from riva.proto import riva_asr_pb2_grpc as rasr_srv
     from riva.proto import riva_audio_pb2 as ra
-    print("Successfully imported Riva modules from package")
+    print("Success: Imported from riva.proto package")
+    import_success = True
 except ImportError as e:
-    # Detailed error for debugging
-    print(f"Import error: {e}")
-    print(f"Python path: {sys.path}")
-    print(f"Current directory: {current_dir}")
-    print(f"Checking for generated files...")
-    
-    # List files in the proto directory
-    proto_dir = os.path.join(current_dir, "riva", "proto")
-    if os.path.exists(proto_dir):
-        files = os.listdir(proto_dir)
-        print(f"Files in {proto_dir}: {files}")
-    else:
-        print(f"Proto directory {proto_dir} does not exist")
+    print(f"Error importing from riva.proto: {e}")
 
-    # Try direct imports as a last resort
+# Second strategy: direct import
+if not import_success:
     try:
-        # Try to use a relative import path
-        sys.path.insert(0, os.path.join(current_dir, "riva", "proto"))
+        print("Trying direct import...")
         import riva_asr_pb2 as rasr
         import riva_asr_pb2_grpc as rasr_srv
         import riva_audio_pb2 as ra
-        print("Imported using direct path")
-    except ImportError as e2:
-        print(f"Final import attempt failed: {e2}")
-        raise ImportError("Could not import Riva proto modules. Please ensure they are generated correctly.")
+        print("Success: Imported directly")
+        import_success = True
+    except ImportError as e:
+        print(f"Error with direct import: {e}")
+
+# Third strategy: fix the generated files
+if not import_success:
+    try:
+        print("Attempting to fix and locate proto files...")
+        # Look for the generated files in the current directory
+        pb2_files = glob.glob(os.path.join(current_dir, "*_pb2.py"))
+        pb2_grpc_files = glob.glob(os.path.join(current_dir, "*_pb2_grpc.py"))
+        
+        # Copy to the right location if found
+        if pb2_files or pb2_grpc_files:
+            print(f"Found {len(pb2_files)} pb2 files and {len(pb2_grpc_files)} pb2_grpc files")
+            for file_path in pb2_files + pb2_grpc_files:
+                file_name = os.path.basename(file_path)
+                dest_path = os.path.join(current_dir, "riva", "proto", file_name)
+                shutil.copy(file_path, dest_path)
+                print(f"Copied {file_name} to riva/proto/")
+            
+            # Try import again
+            from riva.proto import riva_asr_pb2 as rasr
+            from riva.proto import riva_asr_pb2_grpc as rasr_srv
+            from riva.proto import riva_audio_pb2 as ra
+            print("Success: Imported after fixing file locations")
+            import_success = True
+    except Exception as e:
+        print(f"Error fixing proto files: {e}")
+
+if not import_success:
+    print("\nCould not import Riva proto modules. Please check the output for errors.")
+    print("Make sure the proto files were generated correctly.")
+    sys.exit(1)
 
 class RivaClient:
     """Client class for Riva ASR service."""
