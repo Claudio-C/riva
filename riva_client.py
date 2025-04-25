@@ -10,13 +10,19 @@ try:
     from riva_api.riva.proto import riva_asr_pb2_grpc as rasr_srv
     from riva_api.riva.proto import riva_audio_pb2 as ra
 except ImportError:
-    # Alternative import paths depending on how protos were generated
+    # Check if the modules exist in the non-prefixed path
     try:
-        import riva_api.riva_asr_pb2 as rasr
-        import riva_api.riva_asr_pb2_grpc as rasr_srv
-        import riva_api.riva_audio_pb2 as ra
+        from riva.proto import riva_asr_pb2 as rasr
+        from riva.proto import riva_asr_pb2_grpc as rasr_srv
+        from riva.proto import riva_audio_pb2 as ra
     except ImportError:
-        raise ImportError("Could not import Riva proto modules. Please run generate_protos.py first.")
+        # Final fallback to direct import
+        try:
+            import riva_asr_pb2 as rasr
+            import riva_asr_pb2_grpc as rasr_srv
+            import riva_audio_pb2 as ra
+        except ImportError:
+            raise ImportError("Could not import Riva proto modules. Please run generate_protos.py first.")
 
 class RivaClient:
     """Client class for Riva ASR service."""
@@ -38,7 +44,7 @@ class RivaClient:
     
     def transcribe_stream(self, audio_stream: Generator[bytes, None, None], 
                          sample_rate_hz: int = 16000,
-                         language_code: str = "en-US") -> Generator[str, None, None]:
+                         language_code: str = "en-US") -> Generator[dict, None, None]:
         """
         Transcribe streaming audio with Riva ASR.
         
@@ -77,10 +83,11 @@ class RivaClient:
         
         for response in responses:
             for result in response.results:
-                yield {
-                    'transcript': result.alternatives[0].transcript,
-                    'is_final': result.is_final
-                }
+                if result.alternatives:
+                    yield {
+                        'transcript': result.alternatives[0].transcript,
+                        'is_final': result.is_final
+                    }
     
     def close(self):
         """Close the gRPC channel."""
