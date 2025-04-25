@@ -6,6 +6,7 @@ import threading
 import json
 import time
 import ssl
+import queue
 from riva_client import RivaClient
 
 app = Flask(__name__, static_folder='static', template_folder='templates')
@@ -90,13 +91,45 @@ def stream_start():
     """Initialize a streaming session."""
     session_id = str(uuid.uuid4())
     
+    # Get sample rate from request or use default
+    sample_rate = int(request.args.get('sample_rate', 16000))
+    
+    # Create queues for audio data and results
+    audio_queue = queue.Queue()
+    results_queue = queue.Queue()
+    
     # Store session info
     active_sessions[session_id] = {
         'created_at': time.time(),
-        'audio_chunks': [],
+        'audio_queue': audio_queue,
+        'results_queue': results_queue,
         'results': [],
-        'complete': False
+        'complete': False,
+        'sample_rate': sample_rate
     }
+    
+    # Start a dedicated thread for this streaming session
+    def session_thread():
+        try:
+            riva_client.create_streaming_session(
+                audio_queue=audio_queue,
+                results_queue=results_queue,
+                sample_rate_hz=sample_rate
+            )
+        except Exception as e:
+            print(f"Error in session thread {session_id}: {e}")
+        finally:
+            # Mark session as complete when the thread ends
+            if session_id in active_sessions:
+                active_sessions[session_id]['complete'] = True
+    
+    # Start the session thread
+    thread = threading.Thread(target=session_thread)
+    thread.daemon = True
+    thread.start()
+    
+    # Store thread in session
+    active_sessions[session_id]['thread'] = thread
     
     return jsonify({'session_id': session_id})
 
@@ -110,36 +143,32 @@ def stream_audio(session_id):
         return jsonify({'error': 'No audio data received'}), 400
     
     session = active_sessions[session_id]
-    session['audio_chunks'].append(request.data)
     
-    # Get sample rate from query params or use default
-    sample_rate = int(request.args.get('sample_rate', 16000))
+    # Add audio chunk to the queue for processing
+    try:
+        session['audio_queue'].put(request.data)
+    except Exception as e:
+        print(f"Error queuing audio chunk: {e}")
+        return jsonify({'error': f'Failed to process audio: {str(e)}'}), 500
     
-    # Process in separate thread to avoid blocking
-    def process_audio():
-        def audio_stream():
-            yield request.data
-        
-        try:
-            for result in riva_client.transcribe_stream(audio_stream(), sample_rate_hz=sample_rate):
-                if session_id in active_sessions:  # Check if session still exists
-                    session = active_sessions[session_id]
-                    session['results'].append(result)
-        except Exception as e:
-            print(f"Error in stream processing: {e}")
+    # Collect any new results
+    try:
+        while not session['results_queue'].empty():
+            result = session['results_queue'].get_nowait()
+            session['results'].append(result)
+            session['results_queue'].task_done()
+    except Exception as e:
+        print(f"Error collecting results: {e}")
     
-    # Start processing thread
-    threading.Thread(target=process_audio).start()
-    
-    # Return the latest results we have so far
-    latest_results = [r['transcript'] for r in session['results'] if r['is_final']]
+    # Return the latest results
+    latest_results = [r['transcript'] for r in session['results'] if r.get('is_final', False)]
     if not latest_results and session['results']:
         # Return the latest interim result if no final results yet
         latest_results = [session['results'][-1]['transcript']]
     
     return jsonify({
         'transcription': ' '.join(latest_results) if latest_results else '',
-        'is_final': any(r['is_final'] for r in session['results']) if session['results'] else False
+        'is_final': any(r.get('is_final', False) for r in session['results']) if session['results'] else False
     })
 
 @app.route('/stream_stop/<session_id>', methods=['POST'])
@@ -149,13 +178,38 @@ def stream_stop(session_id):
         return jsonify({'error': 'Invalid session ID'}), 400
     
     session = active_sessions[session_id]
-    session['complete'] = True
+    
+    # Signal the streaming thread to stop by putting None in the queue
+    try:
+        session['audio_queue'].put(None)
+        
+        # Wait for any final results (with timeout)
+        end_time = time.time() + 2.0  # 2 second timeout
+        while time.time() < end_time:
+            try:
+                if not session['results_queue'].empty():
+                    result = session['results_queue'].get_nowait()
+                    session['results'].append(result)
+                    session['results_queue'].task_done()
+                else:
+                    # No more results, break out
+                    break
+            except queue.Empty:
+                break
+            except Exception as e:
+                print(f"Error collecting final results: {e}")
+                break
+        
+        # Mark session as complete
+        session['complete'] = True
+    except Exception as e:
+        print(f"Error stopping session {session_id}: {e}")
     
     # Get final transcription
-    final_results = [r['transcript'] for r in session['results'] if r['is_final']]
+    final_results = [r['transcript'] for r in session['results'] if r.get('is_final', False)]
     final_transcription = ' '.join(final_results) if final_results else ''
     
-    # Cleanup session after a delay to allow final results to be retrieved
+    # Cleanup session after a delay
     def cleanup_session():
         time.sleep(60)  # Keep session for 1 minute
         if session_id in active_sessions:

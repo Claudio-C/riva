@@ -37,6 +37,7 @@ document.addEventListener('DOMContentLoaded', function() {
     let audioContext;
     let processor;
     let input;
+    let streamInterval;
     
     // Start recording
     startRecordingBtn.addEventListener('click', async function() {
@@ -45,7 +46,12 @@ document.addEventListener('DOMContentLoaded', function() {
         
         try {
             // Start a new session with the server
-            const response = await fetch('/stream_start', { method: 'POST' });
+            const response = await fetch('/stream_start', { 
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            });
             const data = await response.json();
             sessionId = data.session_id;
             
@@ -82,6 +88,11 @@ document.addEventListener('DOMContentLoaded', function() {
                 sendAudioChunk(pcmData);
             };
             
+            // Set up polling for results
+            streamInterval = setInterval(() => {
+                getTranscriptionResults();
+            }, 1000);
+            
         } catch (error) {
             liveResult.textContent = `Error: ${error.message}`;
             resetRecording();
@@ -105,9 +116,23 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!sessionId) return;
         
         try {
-            const response = await fetch(`/stream_audio/${sessionId}?sample_rate=16000`, {
+            await fetch(`/stream_audio/${sessionId}?sample_rate=16000`, {
                 method: 'POST',
                 body: audioChunk
+            });
+        } catch (error) {
+            console.error('Error sending audio chunk:', error);
+        }
+    }
+    
+    // Get latest transcription results
+    async function getTranscriptionResults() {
+        if (!sessionId) return;
+        
+        try {
+            const response = await fetch(`/stream_audio/${sessionId}?sample_rate=16000`, {
+                method: 'POST',
+                body: new Uint8Array(0) // Empty request to get latest results without sending audio
             });
             
             const data = await response.json();
@@ -115,7 +140,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 liveResult.textContent = data.transcription;
             }
         } catch (error) {
-            console.error('Error sending audio chunk:', error);
+            console.error('Error getting transcription results:', error);
         }
     }
     
@@ -133,6 +158,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (audioContext && audioContext.state !== 'closed') {
                     await audioContext.close();
                 }
+                
+                // Clear polling interval
+                clearInterval(streamInterval);
                 
                 // Get final transcription
                 const response = await fetch(`/stream_stop/${sessionId}`, { method: 'POST' });
@@ -155,6 +183,10 @@ document.addEventListener('DOMContentLoaded', function() {
         startRecordingBtn.disabled = false;
         stopRecordingBtn.disabled = true;
         sessionId = null;
+        
+        if (streamInterval) {
+            clearInterval(streamInterval);
+        }
         
         // Clean up audio resources
         if (processor && input) {

@@ -5,6 +5,7 @@ import threading
 import os
 import sys
 import glob
+import queue
 from typing import Generator, List, Optional
 
 # Add current directory to Python path
@@ -154,18 +155,105 @@ class RivaClient:
         def request_generator():
             yield first_request
             for chunk in audio_stream:
-                yield rasr.StreamingRecognizeRequest(audio_content=chunk)
+                if chunk:
+                    yield rasr.StreamingRecognizeRequest(audio_content=chunk)
         
-        # Stream recognition
-        responses = self.asr_client.StreamingRecognize(request_generator())
+        try:
+            # Stream recognition
+            responses = self.asr_client.StreamingRecognize(request_generator())
+            
+            for response in responses:
+                for result in response.results:
+                    if result.alternatives:
+                        yield {
+                            'transcript': result.alternatives[0].transcript,
+                            'is_final': result.is_final
+                        }
+        except Exception as e:
+            print(f"Error in Riva transcribe_stream: {e}")
+            yield {
+                'transcript': f"Error: {str(e)}",
+                'is_final': True,
+                'error': True
+            }
+    
+    def create_streaming_session(self, audio_queue, results_queue, 
+                               sample_rate_hz=16000, 
+                               language_code="en-US"):
+        """
+        Create a long-running streaming session that reads audio from a queue.
         
-        for response in responses:
-            for result in response.results:
-                if result.alternatives:
-                    yield {
-                        'transcript': result.alternatives[0].transcript,
-                        'is_final': result.is_final
-                    }
+        Args:
+            audio_queue: Queue to receive audio chunks
+            results_queue: Queue to put transcription results
+            sample_rate_hz: Audio sample rate
+            language_code: Language code for transcription
+        """
+        # Create a streaming recognition config
+        config = rasr.RecognitionConfig(
+            encoding=ra.AudioEncoding.LINEAR_PCM,
+            sample_rate_hertz=sample_rate_hz,
+            language_code=language_code,
+            max_alternatives=1,
+            enable_automatic_punctuation=True
+        )
+        
+        streaming_config = rasr.StreamingRecognitionConfig(
+            config=config,
+            interim_results=True
+        )
+        
+        # First request contains the config
+        first_request = rasr.StreamingRecognizeRequest(streaming_config=streaming_config)
+        
+        def audio_generator():
+            """Generate audio requests from queue."""
+            # First yield the config request
+            yield first_request
+            
+            while True:
+                try:
+                    # Get audio chunk from queue with timeout
+                    chunk = audio_queue.get(timeout=2.0)
+                    
+                    # None is our signal to end the stream
+                    if chunk is None:
+                        break
+                        
+                    # Yield the audio chunk
+                    yield rasr.StreamingRecognizeRequest(audio_content=chunk)
+                    
+                    # Mark task as done
+                    audio_queue.task_done()
+                    
+                except queue.Empty:
+                    # No data for a while, but keep the stream open
+                    continue
+                except Exception as e:
+                    print(f"Error in audio generator: {e}")
+                    break
+        
+        try:
+            # Start the streaming recognition
+            responses = self.asr_client.StreamingRecognize(audio_generator())
+            
+            # Process responses and put results in the results queue
+            for response in responses:
+                for result in response.results:
+                    if result.alternatives:
+                        results_queue.put({
+                            'transcript': result.alternatives[0].transcript,
+                            'is_final': result.is_final,
+                            'timestamp': time.time()
+                        })
+        except Exception as e:
+            print(f"Error in streaming session: {e}")
+            results_queue.put({
+                'transcript': f"Error in streaming: {str(e)}",
+                'is_final': True,
+                'error': True,
+                'timestamp': time.time()
+            })
     
     def close(self):
         """Close the gRPC channel."""
