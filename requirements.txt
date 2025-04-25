@@ -1,5 +1,2 @@
-Flask==2.0.1
-grpcio==1.41.0
-nvidia-riva-client==2.0.0
-python-dotenv==0.19.1
-Werkzeug==2.0.1
+flask==2.0.1
+nvidia-riva-client==2.19.0
