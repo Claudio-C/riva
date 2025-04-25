@@ -1,134 +1,142 @@
 import os
-from flask import Flask, render_template, request, jsonify, Response
-import riva.client
-from riva.client.auth import Auth
-from riva.client.asr import ASRService
-from riva.client.tts import SpeechSynthesisService
-from io import BytesIO
+from flask import Flask, request, jsonify, render_template_string
+from nvidia_riva.client import ASRService
+from nvidia_riva.client.audio_io import AudioChunkFileStream
 
-app = Flask(__name__)
-
-# SSL certificate paths
 SSL_CERT_FILE = "/etc/letsencrypt/live/avatar.ligagc.com/fullchain.pem"
 SSL_KEY_FILE = "/etc/letsencrypt/live/avatar.ligagc.com/privkey.pem"
 
-# Riva client configuration
-RIVA_API_URL = "localhost:50051"  # Default Riva API endpoint
+RIVA_SERVER = "localhost:50051"  # Default Riva server address
 
-# Initialize Riva client
-auth = Auth(uri=RIVA_API_URL, use_ssl=False)  # Set to True if Riva server uses SSL
+app = Flask(__name__)
 
-@app.route('/')
+# Initialize Riva ASR client
+asr_service = ASRService(
+    riva_uri=RIVA_SERVER,
+    ssl_cert=None,  # Not needed for localhost unless Riva is using SSL
+)
+
+HTML_FORM = """
+<!doctype html>
+<title>NVIDIA Riva ASR Demo</title>
+<h2>Upload or Record Audio (16kHz WAV, PCM)</h2>
+<form id="uploadForm" method=post enctype=multipart/form-data>
+  <input type=file name=audio accept="audio/wav">
+  <input type=submit value=Transcribe>
+</form>
+<br>
+<button id="recordBtn">Record</button>
+<button id="stopBtn" disabled>Stop</button>
+<audio id="audioPlayback" controls style="display:none"></audio>
+<script>
+let mediaRecorder;
+let audioChunks = [];
+const recordBtn = document.getElementById('recordBtn');
+const stopBtn = document.getElementById('stopBtn');
+const audioPlayback = document.getElementById('audioPlayback');
+const uploadForm = document.getElementById('uploadForm');
+
+recordBtn.onclick = async function(e) {
+  e.preventDefault();
+  audioChunks = [];
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  mediaRecorder = new MediaRecorder(stream);
+  mediaRecorder.start();
+  recordBtn.disabled = true;
+  stopBtn.disabled = false;
+  mediaRecorder.ondataavailable = e => {
+    if (e.data.size > 0) audioChunks.push(e.data);
+  };
+  mediaRecorder.onstop = e => {
+    const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+    audioPlayback.src = URL.createObjectURL(audioBlob);
+    audioPlayback.style.display = 'block';
+    // Auto-upload after recording
+    const formData = new FormData();
+    formData.append('audio', audioBlob, 'recording.wav');
+    fetch('/', { method: 'POST', body: formData })
+      .then(response => response.text())
+      .then(html => document.documentElement.innerHTML = html);
+  };
+};
+
+stopBtn.onclick = function(e) {
+  e.preventDefault();
+  mediaRecorder.stop();
+  recordBtn.disabled = false;
+  stopBtn.disabled = true;
+};
+</script>
+{% if transcript is defined %}
+  <h3>Transcript:</h3>
+  <pre>{{ transcript }}</pre>
+{% endif %}
+"""
+
+@app.route('/', methods=['GET', 'POST'])
 def index():
-    return render_template('index.html')
+    transcript = None
+    if request.method == 'POST':
+        if 'audio' not in request.files:
+            transcript = 'No audio file provided'
+        else:
+            audio_file = request.files['audio']
+            audio_path = '/tmp/' + audio_file.filename
+            audio_file.save(audio_path)
+            with AudioChunkFileStream(audio_path, chunk_size=16000) as stream:
+                responses = asr_service.streaming_recognize(
+                    audio_chunks=stream,
+                    config={
+                        "language_code": "en-US",
+                        "sample_rate_hertz": 16000,
+                        "encoding": "LINEAR_PCM",
+                        "max_alternatives": 1,
+                        "interim_results": False,
+                        "automatic_punctuation": True,
+                    }
+                )
+                transcript = ""
+                for response in responses:
+                    for result in response.results:
+                        if result.alternatives:
+                            transcript += result.alternatives[0].transcript
+            os.remove(audio_path)
+    return render_template_string(HTML_FORM, transcript=transcript)
 
-@app.route('/asr', methods=['POST'])
-def speech_to_text():
+@app.route('/transcribe', methods=['POST'])
+def transcribe():
     if 'audio' not in request.files:
         return jsonify({'error': 'No audio file provided'}), 400
-    
+
     audio_file = request.files['audio']
-    if audio_file.filename == '':
-        return jsonify({'error': 'No audio file selected'}), 400
-    
-    # Create ASR service
-    asr_service = ASRService(auth)
-    
-    # Configure ASR parameters for streaming
-    config = riva.client.StreamingRecognitionConfig(
-        config=riva.client.RecognitionConfig(
-            encoding=riva.client.AudioEncoding.LINEAR_PCM,
-            sample_rate_hertz=16000,
-            language_code="en-US",
-            max_alternatives=1,
-            profanity_filter=False,
-            enable_automatic_punctuation=True,
-            verbatim_transcripts=False,
-        )
-    )
-    
-    # Read audio data
-    audio_data = audio_file.read()
-    
-    # Process audio in streaming mode
-    responses = []
-    for response in asr_service.streaming_recognize(config=config, audio_generator=[audio_data]):
-        for result in response.results:
-            if result.is_final:
-                transcription = result.alternatives[0].transcript
-                confidence = result.alternatives[0].confidence
-                responses.append({
-                    "transcript": transcription,
-                    "confidence": confidence
-                })
-    
-    return jsonify({
-        'success': True,
-        'results': responses
-    })
+    audio_path = '/tmp/' + audio_file.filename
+    audio_file.save(audio_path)
 
-@app.route('/tts', methods=['POST'])
-def text_to_speech():
-    data = request.json
-    if not data or 'text' not in data:
-        return jsonify({'error': 'No text provided'}), 400
-
-    text = data['text']
-    voice = data.get('voice', 'English-US-Female-1')
-    
-    # Create TTS service
-    tts_service = SpeechSynthesisService(auth)
-    
-    try:
-        # Use streaming synthesis
-        audio_chunks = []
-        responses = tts_service.synthesize(
-            text,
-            voice_name=voice,
-            sample_rate_hz=22050
+    # Stream audio to Riva ASR
+    with AudioChunkFileStream(audio_path, chunk_size=16000) as stream:
+        responses = asr_service.streaming_recognize(
+            audio_chunks=stream,
+            config={
+                "language_code": "en-US",
+                "sample_rate_hertz": 16000,
+                "encoding": "LINEAR_PCM",
+                "max_alternatives": 1,
+                "interim_results": False,
+                "automatic_punctuation": True,
+            }
         )
-        
+        transcript = ""
         for response in responses:
-            audio_chunks.append(response.audio)
-        
-        audio_data = b''.join(audio_chunks)
-        
-        # Return audio as response
-        return Response(audio_data, mimetype='audio/wav')
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+            for result in response.results:
+                if result.alternatives:
+                    transcript += result.alternatives[0].transcript
 
-@app.route('/tts-stream', methods=['POST'])
-def text_to_speech_stream():
-    data = request.json
-    if not data or 'text' not in data:
-        return jsonify({'error': 'No text provided'}), 400
-
-    text = data['text']
-    voice = data.get('voice', 'English-US-Female-1')
-    
-    # Create TTS service
-    tts_service = SpeechSynthesisService(auth)
-    
-    def generate():
-        try:
-            responses = tts_service.synthesize(
-                text,
-                voice_name=voice,
-                sample_rate_hz=22050
-            )
-            
-            for response in responses:
-                yield response.audio
-        except Exception as e:
-            print(f"Error in TTS streaming: {e}")
-    
-    return Response(generate(), mimetype='audio/wav')
+    os.remove(audio_path)
+    return jsonify({'transcript': transcript})
 
 if __name__ == '__main__':
     app.run(
         host='0.0.0.0',
-        port=5000,
-        ssl_context=(SSL_CERT_FILE, SSL_KEY_FILE),
-        debug=True
+        port=8443,
+        ssl_context=(SSL_CERT_FILE, SSL_KEY_FILE)
     )

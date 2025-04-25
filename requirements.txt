@@ -1,4 +1,2 @@
-flask==2.3.3
+Flask
 nvidia-riva-client==2.19.0
-python-dotenv==1.0.0
-werkzeug==2.3.7
