@@ -5,6 +5,7 @@ import uuid
 import threading
 import json
 import time
+import ssl
 from riva_client import RivaClient
 
 app = Flask(__name__, static_folder='static', template_folder='templates')
@@ -154,14 +155,34 @@ def stream_stop(session_id):
 @app.route('/health', methods=['GET'])
 def health_check():
     """Simple health check endpoint."""
-    return jsonify({'status': 'healthy'})
+    return jsonify({'status': 'healthy', 'server': 'Riva Flask API'})
+
+def check_ssl_config():
+    """Check if SSL certificates exist and are valid."""
+    if not os.path.exists(SSL_CERT_FILE) or not os.path.exists(SSL_KEY_FILE):
+        print(f"Warning: SSL certificates not found at {SSL_CERT_FILE} and {SSL_KEY_FILE}")
+        print("Running without SSL (not secure).")
+        return False
+    
+    try:
+        # Try to load the certificates to validate them
+        ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+        ssl_context.load_cert_chain(certfile=SSL_CERT_FILE, keyfile=SSL_KEY_FILE)
+        print("SSL certificates loaded successfully.")
+        return True
+    except Exception as e:
+        print(f"Error loading SSL certificates: {e}")
+        print("Running without SSL (not secure).")
+        return False
 
 if __name__ == '__main__':
-    # Check if SSL certificates exist
-    if os.path.exists(SSL_CERT_FILE) and os.path.exists(SSL_KEY_FILE):
+    # Create a proper SSL context if certificates exist
+    ssl_available = check_ssl_config()
+    
+    if ssl_available:
         # Run with SSL
-        app.run(host='0.0.0.0', port=5000, ssl_context=(SSL_CERT_FILE, SSL_KEY_FILE))
+        context = (SSL_CERT_FILE, SSL_KEY_FILE)
+        app.run(host='0.0.0.0', port=5000, ssl_context=context)
     else:
-        # Run without SSL (for development)
-        print("Warning: SSL certificates not found. Running without SSL (not secure).")
+        # Run without SSL
         app.run(host='0.0.0.0', port=5000)
