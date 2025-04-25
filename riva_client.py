@@ -2,49 +2,54 @@ import grpc
 import wave
 import time
 import threading
-from typing import Generator, List, Optional
 import os
 import sys
+from typing import Generator, List, Optional
 
-# Add the current directory to the Python path to ensure imports work
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# Add the parent directory to the Python path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, current_dir)
 
-# Import generated proto classes - try different import paths
+# Create __init__.py files to make the directories proper Python packages
+for pkg_dir in ["riva", "riva/proto"]:
+    init_file = os.path.join(current_dir, pkg_dir, "__init__.py")
+    if not os.path.exists(init_file):
+        os.makedirs(os.path.dirname(init_file), exist_ok=True)
+        with open(init_file, "w") as f:
+            pass
+
+# Now try to import the generated modules
 try:
-    # First try direct import (files in current directory)
-    import riva.proto.riva_asr_pb2 as rasr
-    import riva.proto.riva_asr_pb2_grpc as rasr_srv
-    import riva.proto.riva_audio_pb2 as ra
-    print("Successfully imported Riva modules from current directory")
-except ImportError:
+    from riva.proto import riva_asr_pb2 as rasr
+    from riva.proto import riva_asr_pb2_grpc as rasr_srv
+    from riva.proto import riva_audio_pb2 as ra
+    print("Successfully imported Riva modules from package")
+except ImportError as e:
+    # Detailed error for debugging
+    print(f"Import error: {e}")
+    print(f"Python path: {sys.path}")
+    print(f"Current directory: {current_dir}")
+    print(f"Checking for generated files...")
+    
+    # List files in the proto directory
+    proto_dir = os.path.join(current_dir, "riva", "proto")
+    if os.path.exists(proto_dir):
+        files = os.listdir(proto_dir)
+        print(f"Files in {proto_dir}: {files}")
+    else:
+        print(f"Proto directory {proto_dir} does not exist")
+
+    # Try direct imports as a last resort
     try:
-        # Try absolute imports
-        from riva.proto import riva_asr_pb2 as rasr
-        from riva.proto import riva_asr_pb2_grpc as rasr_srv
-        from riva.proto import riva_audio_pb2 as ra
-        print("Successfully imported Riva modules using absolute paths")
-    except ImportError:
-        try:
-            # Try direct imports of the generated files
-            import riva_asr_pb2 as rasr
-            import riva_asr_pb2_grpc as rasr_srv
-            import riva_audio_pb2 as ra
-            print("Successfully imported Riva modules directly")
-        except ImportError:
-            # Try to find the generated files
-            proto_files = [
-                "riva/proto/riva_asr_pb2.py",
-                "riva/proto/riva_asr_pb2_grpc.py",
-                "riva/proto/riva_audio_pb2.py",
-                "riva_asr_pb2.py",
-                "riva_asr_pb2_grpc.py", 
-                "riva_audio_pb2.py"
-            ]
-            
-            found_files = [f for f in proto_files if os.path.exists(f)]
-            print(f"Found generated files: {found_files}")
-            
-            raise ImportError("Could not import Riva proto modules. Please run generate_protos.py first and check the output for errors.")
+        # Try to use a relative import path
+        sys.path.insert(0, os.path.join(current_dir, "riva", "proto"))
+        import riva_asr_pb2 as rasr
+        import riva_asr_pb2_grpc as rasr_srv
+        import riva_audio_pb2 as ra
+        print("Imported using direct path")
+    except ImportError as e2:
+        print(f"Final import attempt failed: {e2}")
+        raise ImportError("Could not import Riva proto modules. Please ensure they are generated correctly.")
 
 class RivaClient:
     """Client class for Riva ASR service."""
