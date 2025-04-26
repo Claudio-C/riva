@@ -5,110 +5,13 @@ document.addEventListener('DOMContentLoaded', function() {
     const startRecordingBtn = document.getElementById('startRecording');
     const stopRecordingBtn = document.getElementById('stopRecording');
     const liveResult = document.getElementById('liveResult');
-    const asrModelSelect = document.getElementById('asrModel');
-    const asrLanguageSelect = document.getElementById('asrLanguage');
-    
-    // TTS Elements - only access if TTS is available
-    let ttsVoiceSelect, ttsTextArea, ttsSynthesizeBtn, ttsPlayBtn, ttsStopBtn, ttsDownloadBtn, ttsStatus, ttsPlayer;
-    
-    // TTS variables
-    let currentTtsAudioFile = null;
-    let audioPlayer = null;
-    
-    // Model and language variables
-    let availableModels = {};
-    let currentModel = '';
-    let currentLanguage = '';
-    
-    // Fetch available models from server
-    fetch('/get_models')
-        .then(response => response.json())
-        .then(data => {
-            availableModels = data.asr_models;
-            
-            // Populate ASR model dropdown
-            for (const model in availableModels) {
-                const option = document.createElement('option');
-                option.value = model;
-                option.textContent = model;
-                asrModelSelect.appendChild(option);
-            }
-            
-            // Set default model
-            if (data.default_asr_model) {
-                asrModelSelect.value = data.default_asr_model;
-                currentModel = data.default_asr_model;
-            }
-            
-            // Update languages for selected model
-            updateLanguageOptions(currentModel);
-            
-            // Set default language if available
-            if (data.default_asr_language) {
-                currentLanguage = data.default_asr_language;
-                if (isLanguageSupported(currentModel, currentLanguage)) {
-                    asrLanguageSelect.value = currentLanguage;
-                }
-            }
-        })
-        .catch(error => {
-            console.error('Error fetching models:', error);
-        });
-    
-    // Update language options when model changes
-    asrModelSelect.addEventListener('change', function() {
-        currentModel = this.value;
-        updateLanguageOptions(currentModel);
-    });
-    
-    // Update current language when selection changes
-    asrLanguageSelect.addEventListener('change', function() {
-        currentLanguage = this.value;
-    });
-    
-    // Function to update language dropdown based on selected model
-    function updateLanguageOptions(modelName) {
-        // Clear existing options
-        asrLanguageSelect.innerHTML = '';
-        
-        if (availableModels[modelName]) {
-            availableModels[modelName].forEach(language => {
-                const option = document.createElement('option');
-                option.value = language;
-                option.textContent = language;
-                asrLanguageSelect.appendChild(option);
-                
-                // Select the current language if it's supported
-                if (language === currentLanguage) {
-                    asrLanguageSelect.value = currentLanguage;
-                }
-            });
-            
-            // If current language isn't supported, select the first one
-            if (!isLanguageSupported(modelName, currentLanguage)) {
-                currentLanguage = availableModels[modelName][0];
-                asrLanguageSelect.value = currentLanguage;
-            }
-        }
-    }
-    
-    // Check if a language is supported for a given model
-    function isLanguageSupported(modelName, language) {
-        return availableModels[modelName] && 
-               (availableModels[modelName].includes(language) || 
-                availableModels[modelName][0] === 'multi');
-    }
     
     // Handle file upload form submission
     uploadForm.addEventListener('submit', function(e) {
         e.preventDefault();
         
         const formData = new FormData(uploadForm);
-        // Add model and language to form data
-        formData.append('asr_model', currentModel);
-        formData.append('asr_language', currentLanguage);
-        
-        uploadResult.textContent = `Processing with ${currentModel} (${currentLanguage})...`;
+        uploadResult.textContent = 'Processing...';
         
         fetch('/transcribe', {
             method: 'POST',
@@ -120,7 +23,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 uploadResult.textContent = `Error: ${data.error}`;
             } else {
                 uploadResult.textContent = data.transcription || 'No transcription available';
-                uploadResult.innerHTML += `<p class="model-info">Model: ${data.model}, Language: ${data.language}</p>`;
             }
         })
         .catch(error => {
@@ -140,7 +42,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // Start recording
     startRecordingBtn.addEventListener('click', async function() {
         audioChunks = [];
-        liveResult.textContent = `Initializing ${currentModel} (${currentLanguage})...`;
+        liveResult.textContent = 'Initializing...';
         
         try {
             // Start a new session with the server
@@ -148,19 +50,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    asr_model: currentModel,
-                    asr_language: currentLanguage
-                })
+                }
             });
             const data = await response.json();
-            
-            if (data.error) {
-                liveResult.textContent = `Error: ${data.error}`;
-                return;
-            }
-            
             sessionId = data.session_id;
             
             // Request permission to use microphone
@@ -174,7 +66,7 @@ document.addEventListener('DOMContentLoaded', function() {
             // Update UI
             startRecordingBtn.disabled = true;
             stopRecordingBtn.disabled = false;
-            liveResult.textContent = `Recording with ${data.model} (${data.language})... Speak now.`;
+            liveResult.textContent = 'Recording... Speak now.';
             
             // Connect the audio nodes
             input = audioContext.createMediaStreamSource(stream);
@@ -290,7 +182,6 @@ document.addEventListener('DOMContentLoaded', function() {
                     liveResult.textContent = `Error: ${data.error}`;
                 } else {
                     liveResult.textContent = data.final_transcription || 'Transcription complete';
-                    liveResult.innerHTML += `<p class="model-info">Model: ${data.model}, Language: ${data.language}</p>`;
                 }
             } catch (error) {
                 liveResult.textContent = `Error finalizing transcription: ${error.message}`;
@@ -322,288 +213,5 @@ document.addEventListener('DOMContentLoaded', function() {
         if (audioContext && audioContext.state !== 'closed') {
             audioContext.close().catch(e => console.error('Error closing AudioContext:', e));
         }
-    }
-    
-    // Check if TTS is available
-    if (typeof ttsAvailable !== 'undefined' && ttsAvailable) {
-        // Initialize TTS elements
-        ttsVoiceSelect = document.getElementById('ttsVoice');
-        ttsTextArea = document.getElementById('ttsText');
-        ttsSynthesizeBtn = document.getElementById('ttsSynthesize');
-        ttsPlayBtn = document.getElementById('ttsPlay');
-        ttsStopBtn = document.getElementById('ttsStop');
-        ttsDownloadBtn = document.getElementById('ttsDownload');
-        ttsStatus = document.getElementById('ttsStatus');
-        ttsPlayer = document.getElementById('ttsPlayer');
-        
-        // Set up TTS event handlers
-        setupTtsHandlers();
-    } else {
-        console.log('TTS functionality is not available');
-    }
-    
-    // TTS Functions
-    
-    // Load available TTS voices for selected language
-    function loadTtsVoices(language) {
-        fetch(`/tts/voices?language=${language}`)
-            .then(response => response.json())
-            .then(data => {
-                // Clear existing options
-                ttsVoiceSelect.innerHTML = '';
-                
-                // Add available voices or defaults
-                const voices = data.voices || ['English-US-Female-1', 'English-US-Male-1'];
-                
-                voices.forEach(voice => {
-                    const option = document.createElement('option');
-                    option.value = voice;
-                    option.textContent = formatVoiceName(voice);
-                    ttsVoiceSelect.appendChild(option);
-                });
-                
-                // Set default voice
-                if (data.default_voice) {
-                    ttsVoiceSelect.value = data.default_voice;
-                }
-            })
-            .catch(error => {
-                console.error('Error loading TTS voices:', error);
-                // Add default voices as fallback
-                ttsVoiceSelect.innerHTML = '';
-                
-                ['English-US-Female-1', 'English-US-Male-1'].forEach(voice => {
-                    const option = document.createElement('option');
-                    option.value = voice;
-                    option.textContent = formatVoiceName(voice);
-                    ttsVoiceSelect.appendChild(option);
-                });
-            });
-    }
-    
-    // Format voice name for display
-    function formatVoiceName(voice) {
-        // Handle simplified voice names (e.g. "en-US")
-        if (voice.indexOf('-') > 0 && voice.indexOf('Female') === -1 && voice.indexOf('Male') === -1) {
-            const parts = voice.split('-');
-            if (parts.length === 2) {
-                const language = parts[0].toUpperCase();
-                const region = parts[1];
-                return `${getLanguageName(language)} (${region})`;
-            }
-        }
-        
-        // Previous handling for voices with gender
-        const parts = voice.split('-');
-        if (parts.length >= 3) {
-            const language = parts[0];
-            const gender = parts[2];
-            const number = parts.length > 3 ? parts[3] : '';
-            return `${language} ${gender} ${number}`.trim();
-        }
-        return voice;
-    }
-    
-    // Helper function to get language name from code
-    function getLanguageName(code) {
-        const languages = {
-            'EN': 'English',
-            'ES': 'Spanish',
-            'FR': 'French',
-            'DE': 'German',
-            'IT': 'Italian',
-            'PT': 'Portuguese',
-            'ZH': 'Chinese',
-            'JA': 'Japanese',
-            'KO': 'Korean',
-            'RU': 'Russian'
-        };
-        return languages[code] || code;
-    }
-    
-    function setupTtsHandlers() {
-        // If TTS is not available, don't set up handlers
-        if (!ttsVoiceSelect || !ttsSynthesizeBtn) return;
-        
-        // Add refresh voices functionality
-        const refreshVoicesBtn = document.getElementById('refreshVoices');
-        if (refreshVoicesBtn) {
-            refreshVoicesBtn.addEventListener('click', function() {
-                refreshVoicesBtn.disabled = true;
-                refreshVoicesBtn.textContent = 'Refreshing...';
-                
-                fetch('/tts/refresh_voices', {
-                    method: 'POST',
-                })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        // Reload voices for the current language
-                        loadTtsVoices(currentLanguage);
-                        ttsStatus.textContent = 'Voices refreshed successfully';
-                    } else {
-                        ttsStatus.textContent = `Error refreshing voices: ${data.error}`;
-                    }
-                })
-                .catch(error => {
-                    ttsStatus.textContent = `Error: ${error.message}`;
-                })
-                .finally(() => {
-                    refreshVoicesBtn.disabled = false;
-                    refreshVoicesBtn.textContent = 'Refresh Available Voices';
-                });
-            });
-        }
-        
-        // Add test voices functionality
-        const testVoicesBtn = document.getElementById('testVoices');
-        if (testVoicesBtn) {
-            testVoicesBtn.addEventListener('click', function() {
-                testVoicesBtn.disabled = true;
-                testVoicesBtn.textContent = 'Testing Voices...';
-                ttsStatus.textContent = 'Testing voice configurations, please wait...';
-                
-                fetch('/tts/test_voices', {
-                    method: 'POST',
-                })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        // Reload voices for the current language
-                        loadTtsVoices(currentLanguage);
-                        ttsStatus.textContent = 'Voice configuration testing complete. Try synthesizing text now.';
-                    } else {
-                        ttsStatus.textContent = `Error testing voices: ${data.error}`;
-                    }
-                })
-                .catch(error => {
-                    ttsStatus.textContent = `Error: ${error.message}`;
-                })
-                .finally(() => {
-                    testVoicesBtn.disabled = false;
-                    testVoicesBtn.textContent = 'Test Available Voices';
-                });
-            });
-        }
-        
-        // Handle TTS synthesis
-        ttsSynthesizeBtn.addEventListener('click', function() {
-            const text = ttsTextArea.value.trim();
-            
-            if (!text) {
-                ttsStatus.textContent = 'Please enter text to synthesize';
-                return;
-            }
-            
-            // Clear previous audio
-            if (audioPlayer) {
-                audioPlayer.pause();
-                audioPlayer.remove();
-                audioPlayer = null;
-            }
-            
-            ttsStatus.textContent = 'Synthesizing speech...';
-            ttsPlayBtn.disabled = true;
-            ttsStopBtn.disabled = true;
-            ttsDownloadBtn.disabled = true;
-            
-            // Send synthesis request
-            fetch('/tts/synthesize', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    text: text,
-                    language: currentLanguage,
-                    voice: ttsVoiceSelect.value
-                })
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.error) {
-                    ttsStatus.textContent = `Error: ${data.error}`;
-                    return;
-                }
-                
-                // Store audio file reference
-                currentTtsAudioFile = data.audio_file;
-                
-                // Create audio player
-                audioPlayer = new Audio(`/tts/audio/${data.audio_file}`);
-                ttsPlayer.innerHTML = '';
-                ttsPlayer.appendChild(audioPlayer);
-                
-                // Update UI
-                ttsStatus.textContent = 'Speech synthesized successfully.';
-                ttsPlayBtn.disabled = false;
-                ttsDownloadBtn.disabled = false;
-                
-                // Add event listeners to audio player
-                audioPlayer.addEventListener('ended', function() {
-                    ttsPlayBtn.textContent = 'Play';
-                    ttsStopBtn.disabled = true;
-                });
-                
-                audioPlayer.addEventListener('play', function() {
-                    ttsPlayBtn.textContent = 'Pause';
-                    ttsStopBtn.disabled = false;
-                });
-                
-                audioPlayer.addEventListener('pause', function() {
-                    ttsPlayBtn.textContent = 'Play';
-                });
-            })
-            .catch(error => {
-                ttsStatus.textContent = `Error: ${error.message}`;
-            });
-        });
-        
-        // Handle play/pause button
-        ttsPlayBtn.addEventListener('click', function() {
-            if (!audioPlayer) return;
-            
-            if (audioPlayer.paused) {
-                audioPlayer.play();
-                ttsPlayBtn.textContent = 'Pause';
-                ttsStopBtn.disabled = false;
-            } else {
-                audioPlayer.pause();
-                ttsPlayBtn.textContent = 'Play';
-            }
-        });
-        
-        // Handle stop button
-        ttsStopBtn.addEventListener('click', function() {
-            if (!audioPlayer) return;
-            
-            audioPlayer.pause();
-            audioPlayer.currentTime = 0;
-            ttsPlayBtn.textContent = 'Play';
-            ttsStopBtn.disabled = true;
-        });
-        
-        // Handle download button
-        ttsDownloadBtn.addEventListener('click', function() {
-            if (!currentTtsAudioFile) return;
-            
-            // Create a download link
-            const downloadLink = document.createElement('a');
-            downloadLink.href = `/tts/audio/${currentTtsAudioFile}`;
-            downloadLink.download = `riva_tts_${Date.now()}.wav`;
-            document.body.appendChild(downloadLink);
-            downloadLink.click();
-            document.body.removeChild(downloadLink);
-        });
-        
-        // Initial setup
-        // Load TTS voices for default language (en-US)
-        loadTtsVoices('en-US');
-        
-        // Update TTS voices when language changes
-        asrLanguageSelect.addEventListener('change', function() {
-            // This ensures TTS voices match the selected language
-            loadTtsVoices(this.value);
-        });
     }
 });

@@ -6,7 +6,6 @@ import os
 import sys
 import glob
 import queue
-import shutil
 from typing import Generator, List, Optional
 
 # Add current directory to Python path
@@ -48,8 +47,6 @@ if proto_path:
 
 # Try different import strategies
 rasr = rasr_srv = ra = None
-tts_available = False  # Flag to track TTS availability
-rtts = rtts_srv = None
 import_success = False
 
 # First strategy: standard import from package
@@ -58,18 +55,7 @@ try:
     from riva.proto import riva_asr_pb2 as rasr
     from riva.proto import riva_asr_pb2_grpc as rasr_srv
     from riva.proto import riva_audio_pb2 as ra
-    
-    # Try to import TTS modules but continue if not available
-    try:
-        from riva.proto import riva_tts_pb2 as rtts
-        from riva.proto import riva_tts_pb2_grpc as rtts_srv
-        tts_available = True
-        print("TTS modules successfully imported")
-    except ImportError as e:
-        print(f"TTS modules not available: {e}")
-        print("TTS functionality will be disabled")
-    
-    print("Success: Imported ASR modules from riva.proto package")
+    print("Success: Imported from riva.proto package")
     import_success = True
 except ImportError as e:
     print(f"Error importing from riva.proto: {e}")
@@ -81,18 +67,7 @@ if not import_success:
         import riva_asr_pb2 as rasr
         import riva_asr_pb2_grpc as rasr_srv
         import riva_audio_pb2 as ra
-        
-        # Try to import TTS modules but continue if not available
-        try:
-            import riva_tts_pb2 as rtts
-            import riva_tts_pb2_grpc as rtts_srv
-            tts_available = True
-            print("TTS modules successfully imported")
-        except ImportError as e:
-            print(f"TTS modules not available: {e}")
-            print("TTS functionality will be disabled")
-        
-        print("Success: Imported ASR modules directly")
+        print("Success: Imported directly")
         import_success = True
     except ImportError as e:
         print(f"Error with direct import: {e}")
@@ -118,18 +93,7 @@ if not import_success:
             from riva.proto import riva_asr_pb2 as rasr
             from riva.proto import riva_asr_pb2_grpc as rasr_srv
             from riva.proto import riva_audio_pb2 as ra
-            
-            # Try to import TTS modules but continue if not available
-            try:
-                from riva.proto import riva_tts_pb2 as rtts
-                from riva.proto import riva_tts_pb2_grpc as rtts_srv
-                tts_available = True
-                print("TTS modules successfully imported")
-            except ImportError as e:
-                print(f"TTS modules not available: {e}")
-                print("TTS functionality will be disabled")
-            
-            print("Success: Imported ASR modules after fixing file locations")
+            print("Success: Imported after fixing file locations")
             import_success = True
     except Exception as e:
         print(f"Error fixing proto files: {e}")
@@ -150,17 +114,12 @@ class RivaClient:
             server_address: The address of the Riva server (host:port)
         """
         self.server_address = server_address
-        self.tts_available = tts_available
         
         # Create a gRPC channel
         self.channel = grpc.insecure_channel(server_address)
         
-        # Create a stub (client) for ASR
+        # Create a stub (client)
         self.asr_client = rasr_srv.RivaSpeechRecognitionStub(self.channel)
-        
-        # Create a stub for TTS if available
-        if self.tts_available:
-            self.tts_client = rtts_srv.RivaSpeechSynthesisStub(self.channel)
     
     def transcribe_stream(self, audio_stream: Generator[bytes, None, None], 
                          sample_rate_hz: int = 16000,
@@ -306,169 +265,6 @@ class RivaClient:
                 'error': True,
                 'timestamp': time.time()
             })
-    
-    def synthesize_speech(self, 
-                       text: str, 
-                       language_code: str = "en-US",
-                       voice_name: str = None,
-                       sample_rate_hz: int = 22050) -> Optional[bytes]:
-        """
-        Synthesize speech from text using Riva TTS.
-        
-        Args:
-            text: Text to synthesize
-            language_code: Language code for synthesis
-            voice_name: Voice to use for synthesis (or None to use default)
-            sample_rate_hz: Output audio sample rate
-            
-        Returns:
-            Audio data as bytes or None if TTS is unavailable
-        """
-        if not self.tts_available:
-            print("TTS functionality is not available")
-            return None
-            
-        try:
-            # If voice_name is None, use language code directly
-            if voice_name is None:
-                voice_name = language_code
-            
-            print(f"Attempting TTS with voice: '{voice_name}', language: '{language_code}'")
-            
-            # Create synthesis request
-            request = rtts.SynthesizeSpeechRequest(
-                text=text,
-                language_code=language_code,
-                encoding=ra.AudioEncoding.LINEAR_PCM,
-                sample_rate_hz=sample_rate_hz,
-                voice_name=voice_name
-            )
-            
-            # Call the service
-            response = self.tts_client.Synthesize(request)
-            
-            # Return the audio data
-            return response.audio
-            
-        except Exception as e:
-            print(f"Error in Riva synthesize_speech: {e}")
-            
-            # If voice name has uppercase, try lowercase version
-            if voice_name != voice_name.lower() and voice_name != language_code:
-                print(f"Retrying with lowercase voice: '{voice_name.lower()}'")
-                try:
-                    lower_request = rtts.SynthesizeSpeechRequest(
-                        text=text,
-                        language_code=language_code,
-                        encoding=ra.AudioEncoding.LINEAR_PCM,
-                        sample_rate_hz=sample_rate_hz,
-                        voice_name=voice_name.lower()
-                    )
-                    response = self.tts_client.Synthesize(lower_request)
-                    return response.audio
-                except Exception as e2:
-                    print(f"Lowercase retry failed: {e2}")
-            
-            # If specified voice failed and it's not already the language code, try language code as voice name
-            if voice_name != language_code:
-                print(f"Retrying with voice name = language code: '{language_code}'")
-                try:
-                    lang_request = rtts.SynthesizeSpeechRequest(
-                        text=text,
-                        language_code=language_code,
-                        encoding=ra.AudioEncoding.LINEAR_PCM,
-                        sample_rate_hz=sample_rate_hz,
-                        voice_name=language_code
-                    )
-                    response = self.tts_client.Synthesize(lang_request)
-                    return response.audio
-                except Exception as e3:
-                    print(f"Language code retry also failed: {e3}")
-            
-            return None
-    
-    def get_available_voices(self, language_code: str = "en-US") -> List[str]:
-        """
-        Get available TTS voices for the specified language.
-        
-        Args:
-            language_code: Language code to query voices for
-            
-        Returns:
-            List of available voice names
-        """
-        if not self.tts_available:
-            print("TTS functionality is not available")
-            return ["English-US"] # Simplified voice name
-            
-        try:
-            # Check if ListVoicesRequest is available
-            if not hasattr(rtts, 'ListVoicesRequest'):
-                print("ListVoicesRequest not available in proto")
-                # Return simplified voice name without gender specification
-                return [f"{language_code.split('-')[0]}-{language_code.split('-')[1]}"]
-                
-            # Create request
-            request = rtts.ListVoicesRequest(language_code=language_code)
-            
-            # Call the service
-            response = self.tts_client.ListVoices(request)
-            
-            # Return voice names
-            return [voice.name for voice in response.voices]
-            
-        except Exception as e:
-            print(f"Error getting available voices: {e}")
-            # Return simplified voice name that matches Riva's expectation
-            return [f"{language_code.split('-')[0]}-{language_code.split('-')[1]}"]
-    
-    def stream_synthesize_speech(self, 
-                              text: str, 
-                              language_code: str = "en-US",
-                              voice_name: str = None,
-                              sample_rate_hz: int = 22050) -> Generator[bytes, None, None]:
-        """
-        Stream synthesized speech from text using Riva TTS.
-        
-        Args:
-            text: Text to synthesize
-            language_code: Language code for synthesis
-            voice_name: Voice to use for synthesis (or None to use default)
-            sample_rate_hz: Output audio sample rate
-            
-        Yields:
-            Audio data chunks as bytes
-        """
-        if not self.tts_available:
-            print("TTS functionality is not available")
-            yield None
-            return
-        
-        try:
-            # If voice_name is None or contains "Female/Male", use just the language code
-            if voice_name is None or "Female" in voice_name or "Male" in voice_name:
-                # Use simplified voice name format that should work with Riva
-                voice_name = f"{language_code.split('-')[0]}-{language_code.split('-')[1]}"
-            
-            # Create synthesis request
-            request = rtts.SynthesizeSpeechRequest(
-                text=text,
-                language_code=language_code,
-                encoding=ra.AudioEncoding.LINEAR_PCM,
-                sample_rate_hz=sample_rate_hz,
-                voice_name=voice_name
-            )
-            
-            # Call the service
-            responses = self.tts_client.SynthesizeStreaming(request)
-            
-            # Yield audio chunks
-            for response in responses:
-                yield response.audio
-                
-        except Exception as e:
-            print(f"Error in Riva stream_synthesize_speech: {e}")
-            yield None
     
     def close(self):
         """Close the gRPC channel."""

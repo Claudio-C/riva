@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify, Response, stream_with_context, redirect, url_for, send_file
+from flask import Flask, render_template, request, jsonify, Response, stream_with_context, redirect, url_for
 import os
 import tempfile
 import uuid
@@ -7,9 +7,7 @@ import json
 import time
 import ssl
 import queue
-import io
-import wave
-from riva_client import RivaClient, tts_available
+from riva_client import RivaClient
 
 app = Flask(__name__, static_folder='static', template_folder='templates')
 
@@ -32,168 +30,23 @@ SSL_KEY_FILE = next((path for path in SSL_KEY_PATHS if os.path.exists(path)), SS
 
 # Riva client configuration
 RIVA_SERVER = "localhost:50051"  # Default Riva server address
-
-# Available ASR models and languages based on server configuration
-ASR_MODELS = {
-    "conformer": ["ar-AR", "en-US", "en-GB", "de-DE", "es-ES", "es-US", "fr-FR", "hi-IN", "it-IT", "ja-JP", "ru-RU", "ko-KR", "pt-BR", "zh-CN", "nl-NL", "nl-BE"],
-    "conformer_xl": ["en-US"],
-    "conformer_unified": ["de-DE", "ja-JP", "zh-CN"],
-    "whisper_large": ["multi"],
-    "canary_1b": ["multi"]
-}
-
-# Available TTS models and languages
-TTS_MODELS = {
-    "fastpitch_hifigan": ["en-US", "es-ES", "es-US", "it-IT", "de-DE", "zh-CN"],
-    "magpie": ["multi"],
-    "radtts_hifigan": ["en-US"]
-}
-
-# Default model and language selections
-DEFAULT_ASR_MODEL = "conformer"
-DEFAULT_ASR_LANGUAGE = "en-US"
-
-# Create a dictionary to store client instances per model/language combo
-riva_clients = {}
-default_client = RivaClient(RIVA_SERVER)
+riva_client = RivaClient(RIVA_SERVER)
 
 # Store active streaming sessions
 active_sessions = {}
 
-# Configure TTS voices based on the fastpitch_hifigan model
-# tts_models_languages_map["fastpitch_hifigan"]="en-US es-ES es-US it-IT de-DE zh-CN"
-VOICES = {}  # Will be populated with working voice configurations
-
-def initialize_voices():
-    """Initialize voice map with supported languages for fastpitch_hifigan model"""
-    global VOICES
-    
-    # Languages supported by fastpitch_hifigan
-    languages = ["en-US", "es-ES", "es-US", "it-IT", "de-DE", "zh-CN"]
-    
-    # For each language, create voice entries with different formats to try
-    for lang in languages:
-        # Start with empty list for this language
-        VOICES[lang] = []
-        
-        # Format 1: Just the language code (primary format that usually works)
-        VOICES[lang].append(lang)
-        
-        # Format 2: Language-specific naming in Riva
-        if lang == "en-US":
-            VOICES[lang].extend(["english", "en-US-FastPitch", "english_us"])
-        elif lang == "es-ES":
-            VOICES[lang].extend(["spanish", "es-ES-FastPitch", "spanish_es"])
-        elif lang == "es-US":
-            VOICES[lang].extend(["spanish-us", "es-US-FastPitch", "spanish_us"])
-        elif lang == "it-IT":
-            VOICES[lang].extend(["italian", "it-IT-FastPitch", "italian_it"])
-        elif lang == "de-DE":
-            VOICES[lang].extend(["german", "de-DE-FastPitch", "german_de"])
-        elif lang == "zh-CN":
-            VOICES[lang].extend(["chinese", "zh-CN-FastPitch", "chinese_cn"])
-    
-    print(f"Initialized TTS voices: {VOICES}")
-
-# Initialize voices on startup
-initialize_voices()
-
-def test_voice_configuration():
-    """Test voice configurations to find working ones"""
-    global VOICES
-    tested_voices = {}
-    
-    # Create a test client
-    test_client = RivaClient(RIVA_SERVER)
-    
-    # Test each language with its voice candidates
-    for lang, voices in VOICES.items():
-        working_voices = []
-        
-        for voice in voices:
-            try:
-                # Test with a short text
-                print(f"Testing voice '{voice}' for language '{lang}'...")
-                audio = test_client.synthesize_speech(
-                    text="Test",
-                    language_code=lang,
-                    voice_name=voice
-                )
-                
-                if audio:
-                    print(f"Voice '{voice}' works for language '{lang}'")
-                    working_voices.append(voice)
-            except Exception as e:
-                print(f"Voice '{voice}' failed for language '{lang}': {e}")
-        
-        # Update the language with only working voices
-        if working_voices:
-            tested_voices[lang] = working_voices
-            print(f"Working voices for {lang}: {working_voices}")
-        else:
-            # Keep the first voice as a potential option even if it failed
-            tested_voices[lang] = [voices[0]]
-            print(f"No working voices found for {lang}, keeping {voices[0]} as fallback")
-    
-    # Update the global VOICES dictionary
-    VOICES = tested_voices
-    return VOICES
-
-@app.route('/tts/test_voices', methods=['POST'])
-def test_voices():
-    """Test and find working TTS voice configurations."""
-    try:
-        voices = test_voice_configuration()
-        return jsonify({
-            'success': True,
-            'voices': voices
-        })
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        })
-
 @app.route('/')
 def index():
     """Render the main page."""
-    return render_template('index.html', tts_available=tts_available)
-
-@app.route('/get_models', methods=['GET'])
-def get_models():
-    """Return available ASR and TTS models and languages."""
-    return jsonify({
-        'asr_models': ASR_MODELS,
-        'tts_models': TTS_MODELS,
-        'default_asr_model': DEFAULT_ASR_MODEL,
-        'default_asr_language': DEFAULT_ASR_LANGUAGE
-    })
+    return render_template('index.html')
 
 @app.route('/transcribe', methods=['POST'])
 def transcribe():
-    """Transcribe uploaded audio file with selected model and language."""
+    """Transcribe uploaded audio file."""
     if 'audio' not in request.files:
         return jsonify({'error': 'No audio file uploaded'}), 400
     
     audio_file = request.files['audio']
-    
-    # Get model and language selection from request or use defaults
-    asr_model = request.form.get('asr_model', DEFAULT_ASR_MODEL)
-    asr_language = request.form.get('asr_language', DEFAULT_ASR_LANGUAGE)
-    
-    # Validate model and language
-    if asr_model not in ASR_MODELS:
-        return jsonify({'error': f'Invalid ASR model: {asr_model}'}), 400
-    
-    if asr_language not in ASR_MODELS[asr_model] and ASR_MODELS[asr_model][0] != "multi":
-        return jsonify({'error': f'Language {asr_language} not supported for model {asr_model}'}), 400
-    
-    # Create or get client for this model/language combination
-    client_key = f"{asr_model}_{asr_language}"
-    if client_key not in riva_clients:
-        riva_clients[client_key] = RivaClient(RIVA_SERVER)
-    
-    client = riva_clients[client_key]
     
     # Save the uploaded file temporarily
     with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp_file:
@@ -214,24 +67,19 @@ def transcribe():
         # Get sample rate from request or use default
         sample_rate = int(request.form.get('sample_rate', 16000))
         
-        # Get transcription with specified model and language
+        # Get transcription
         results = []
         final_text = ""
         
-        for result in client.transcribe_stream(
+        for result in riva_client.transcribe_stream(
             audio_chunks(), 
-            sample_rate_hz=sample_rate,
-            language_code=asr_language
+            sample_rate_hz=sample_rate
         ):
             if result['is_final']:
                 final_text = result['transcript']
                 results.append(final_text)
         
-        return jsonify({
-            'transcription': ' '.join(results) if results else final_text,
-            'model': asr_model,
-            'language': asr_language
-        })
+        return jsonify({'transcription': ' '.join(results) if results else final_text})
     
     finally:
         # Clean up temporary file
@@ -240,34 +88,15 @@ def transcribe():
 
 @app.route('/stream_start', methods=['POST'])
 def stream_start():
-    """Initialize a streaming session with selected model and language."""
+    """Initialize a streaming session."""
     session_id = str(uuid.uuid4())
     
-    # Get model and language selection from request or use defaults
-    data = request.json or {}
-    asr_model = data.get('asr_model', DEFAULT_ASR_MODEL)
-    asr_language = data.get('asr_language', DEFAULT_ASR_LANGUAGE)
-    
-    # Validate model and language
-    if asr_model not in ASR_MODELS:
-        return jsonify({'error': f'Invalid ASR model: {asr_model}'}), 400
-    
-    if asr_language not in ASR_MODELS[asr_model] and ASR_MODELS[asr_model][0] != "multi":
-        return jsonify({'error': f'Language {asr_language} not supported for model {asr_model}'}), 400
-    
     # Get sample rate from request or use default
-    sample_rate = int(data.get('sample_rate', 16000))
+    sample_rate = int(request.args.get('sample_rate', 16000))
     
     # Create queues for audio data and results
     audio_queue = queue.Queue()
     results_queue = queue.Queue()
-    
-    # Create or get client for this model/language combination
-    client_key = f"{asr_model}_{asr_language}"
-    if client_key not in riva_clients:
-        riva_clients[client_key] = RivaClient(RIVA_SERVER)
-    
-    client = riva_clients[client_key]
     
     # Store session info
     active_sessions[session_id] = {
@@ -276,20 +105,16 @@ def stream_start():
         'results_queue': results_queue,
         'results': [],
         'complete': False,
-        'sample_rate': sample_rate,
-        'asr_model': asr_model,
-        'asr_language': asr_language,
-        'client': client
+        'sample_rate': sample_rate
     }
     
     # Start a dedicated thread for this streaming session
     def session_thread():
         try:
-            client.create_streaming_session(
+            riva_client.create_streaming_session(
                 audio_queue=audio_queue,
                 results_queue=results_queue,
-                sample_rate_hz=sample_rate,
-                language_code=asr_language
+                sample_rate_hz=sample_rate
             )
         except Exception as e:
             print(f"Error in session thread {session_id}: {e}")
@@ -306,11 +131,7 @@ def stream_start():
     # Store thread in session
     active_sessions[session_id]['thread'] = thread
     
-    return jsonify({
-        'session_id': session_id,
-        'model': asr_model,
-        'language': asr_language
-    })
+    return jsonify({'session_id': session_id})
 
 @app.route('/stream_audio/<session_id>', methods=['POST'])
 def stream_audio(session_id):
@@ -329,7 +150,7 @@ def stream_audio(session_id):
             session['audio_queue'].put(request.data)
         except Exception as e:
             print(f"Error queuing audio chunk: {e}")
-            return jsonify({'error': f'Failed to process audio: {str(e)}'}, 500)
+            return jsonify({'error': f'Failed to process audio: {str(e)}'}), 500
     
     # Collect any new results
     try:
@@ -399,11 +220,7 @@ def stream_stop(session_id):
     
     threading.Thread(target=cleanup_session).start()
     
-    return jsonify({
-        'final_transcription': final_transcription,
-        'model': session['asr_model'],
-        'language': session['asr_language']
-    })
+    return jsonify({'final_transcription': final_transcription})
 
 @app.route('/health', methods=['GET'])
 def health_check():
@@ -437,148 +254,6 @@ def ssl_check():
         'checked_cert_paths': SSL_CERT_PATHS,
         'checked_key_paths': SSL_KEY_PATHS
     })
-
-@app.route('/tts/available', methods=['GET'])
-def check_tts_available():
-    """Check if TTS functionality is available."""
-    return jsonify({'available': tts_available})
-
-@app.route('/tts/refresh_voices', methods=['POST'])
-def refresh_tts_voices():
-    """Force a refresh of available TTS voices."""
-    try:
-        voices = query_available_tts_voices()
-        return jsonify({
-            'success': True,
-            'voices': voices
-        })
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        })
-
-@app.route('/tts/voices', methods=['GET'])
-def get_tts_voices():
-    """Get available TTS voices for a language."""
-    if not tts_available:
-        return jsonify({
-            'voices': VOICES.get('en-US', []),
-            'default_voice': VOICES.get('en-US', [])[0] if VOICES.get('en-US', []) else None,
-            'error': 'TTS functionality not available'
-        })
-    
-    language = request.args.get('language', 'en-US')
-    
-    # Return the pre-queried voices from our global dictionary
-    voices = VOICES.get(language, [])
-    if not voices and language in TTS_MODELS.get("fastpitch_hifigan", []):
-        # Fallback: Use language code as voice name
-        voices = [language]
-        VOICES[language] = voices
-    
-    return jsonify({
-        'voices': voices,
-        'default_voice': voices[0] if voices else None
-    })
-
-@app.route('/tts/synthesize', methods=['POST'])
-def synthesize_speech():
-    """Synthesize speech from text."""
-    if not tts_available:
-        return jsonify({'error': 'TTS functionality not available'}), 503
-    
-    data = request.json
-    
-    if not data or 'text' not in data:
-        return jsonify({'error': 'No text provided'}), 400
-    
-    text = data['text']
-    language = data.get('language', 'en-US')
-    
-    # Get voice for this language from our global dictionary
-    voices = VOICES.get(language, [language])  # Fallback to language code as voice
-    voice = data.get('voice', voices[0] if voices else language)
-    
-    try:
-        # Generate audio
-        audio_data = default_client.synthesize_speech(
-            text=text,
-            language_code=language,
-            voice_name=voice
-        )
-        
-        if not audio_data:
-            return jsonify({'error': 'Failed to synthesize speech'}), 500
-        
-        # Create a unique filename
-        filename = f"tts_{uuid.uuid4().hex}.wav"
-        filepath = os.path.join(tempfile.gettempdir(), filename)
-        
-        # Write audio to WAV file
-        with wave.open(filepath, 'wb') as wav_file:
-            wav_file.setnchannels(1)  # Mono
-            wav_file.setsampwidth(2)  # 16-bit
-            wav_file.setframerate(22050)  # Sample rate
-            wav_file.writeframes(audio_data)
-        
-        # Return file path (to be used for playback)
-        return jsonify({
-            'audio_file': filename,
-            'text': text,
-            'voice': voice
-        })
-        
-    except Exception as e:
-        return jsonify({'error': f'TTS error: {str(e)}'}, 500)
-
-@app.route('/tts/audio/<filename>', methods=['GET'])
-def get_tts_audio(filename):
-    """Serve synthesized audio file."""
-    filepath = os.path.join(tempfile.gettempdir(), filename)
-    
-    if not os.path.exists(filepath):
-        return jsonify({'error': 'Audio file not found'}), 404
-    
-    try:
-        return send_file(
-            filepath,
-            mimetype='audio/wav',
-            as_attachment=True,
-            download_name=filename
-        )
-    except Exception as e:
-        return jsonify({'error': f'Error serving audio file: {str(e)}'}), 500
-
-@app.route('/tts/stream', methods=['POST'])
-def stream_tts():
-    """Stream synthesized speech."""
-    data = request.json
-    
-    if not data or 'text' not in data:
-        return jsonify({'error': 'No text provided'}), 400
-    
-    text = data['text']
-    language = data.get('language', 'en-US')
-    voice = data.get('voice', VOICES.get(language, [])[0] if VOICES.get(language, []) else "English-US-Female-1")
-    
-    def generate():
-        try:
-            # Use default_client instead of undefined riva_client
-            for audio_chunk in default_client.stream_synthesize_speech(
-                text=text,
-                language_code=language,
-                voice_name=voice
-            ):
-                if audio_chunk:
-                    yield audio_chunk
-        except Exception as e:
-            print(f"Error streaming TTS: {e}")
-    
-    return Response(
-        stream_with_context(generate()),
-        mimetype='audio/wav'
-    )
 
 def check_ssl_config():
     """Check if SSL certificates exist and are valid."""
