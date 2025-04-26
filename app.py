@@ -46,7 +46,9 @@ ASR_MODELS = {
 TTS_MODELS = {
     "fastpitch_hifigan": ["en-US", "es-ES", "es-US", "it-IT", "de-DE", "zh-CN"],
     "magpie": ["multi"],
-    "radtts_hifigan": ["en-US"]
+    "radtts_hifigan": ["en-US"],
+    "radttspp_hifigan": ["en-US"],
+    "pflow_hifigan": ["en-US"]
 }
 
 # Default model and language selections
@@ -62,38 +64,72 @@ default_client = RivaClient(RIVA_SERVER)
 # Store active streaming sessions
 active_sessions = {}
 
+# Mapping of language codes to specific voice names required by the server
+VOICE_NAME_MAP = {
+    "en-US": ["English-US-Female-1", "English-US-Male-1"],
+    "es-ES": ["Spanish-ES-Female-1", "Spanish-ES-Male-1"],
+    "es-US": ["Spanish-US-Female-1", "Spanish-US-Male-1"],
+    "it-IT": ["Italian-IT-Female-1", "Italian-IT-Male-1"],
+    "de-DE": ["German-DE-Female-1", "German-DE-Male-1"],
+    "zh-CN": ["Chinese-CN-Female-1", "Chinese-CN-Male-1"]
+}
+
 # Configure TTS voices based on the fastpitch_hifigan model
 # tts_models_languages_map["fastpitch_hifigan"]="en-US es-ES es-US it-IT de-DE zh-CN"
 VOICES = {}  # Will be populated with working voice configurations
+
+def query_available_tts_voices():
+    """
+    Query available TTS voices from the server and return a mapping of language to voice names.
+    
+    Returns:
+        Dictionary mapping languages to available voice names
+    """
+    global VOICES
+    
+    # Start with the predefined voice mapping
+    result_voices = {}
+    
+    # Create a test client
+    test_client = RivaClient(RIVA_SERVER)
+    
+    # Try to get voices for each supported language
+    for lang in VOICE_NAME_MAP.keys():
+        try:
+            voices = test_client.get_available_voices(lang)
+            if voices:
+                result_voices[lang] = voices
+            # If no voices returned but we have predefined voices, use those
+            elif lang in VOICE_NAME_MAP:
+                result_voices[lang] = VOICE_NAME_MAP[lang]
+        except Exception as e:
+            print(f"Failed to get voices for {lang}: {e}")
+            # Use predefined voices as fallback
+            if lang in VOICE_NAME_MAP:
+                result_voices[lang] = VOICE_NAME_MAP[lang]
+    
+    # If no voices found for a language, use our mapping
+    for lang in VOICE_NAME_MAP:
+        if lang not in result_voices:
+            result_voices[lang] = VOICE_NAME_MAP[lang]
+    
+    # Update the global VOICES dictionary
+    VOICES.update(result_voices)
+    return result_voices
 
 def initialize_voices():
     """Initialize voice map with supported languages for fastpitch_hifigan model"""
     global VOICES
     
-    # Languages supported by fastpitch_hifigan
-    languages = ["en-US", "es-ES", "es-US", "it-IT", "de-DE", "zh-CN"]
+    # Start with our predefined voice map
+    VOICES = VOICE_NAME_MAP.copy()
     
-    # For each language, create voice entries with different formats to try
-    for lang in languages:
-        # Start with empty list for this language
-        VOICES[lang] = []
-        
-        # Format 1: Just the language code (primary format that usually works)
-        VOICES[lang].append(lang)
-        
-        # Format 2: Language-specific naming in Riva
-        if lang == "en-US":
-            VOICES[lang].extend(["english", "en-US-FastPitch", "english_us"])
-        elif lang == "es-ES":
-            VOICES[lang].extend(["spanish", "es-ES-FastPitch", "spanish_es"])
-        elif lang == "es-US":
-            VOICES[lang].extend(["spanish-us", "es-US-FastPitch", "spanish_us"])
-        elif lang == "it-IT":
-            VOICES[lang].extend(["italian", "it-IT-FastPitch", "italian_it"])
-        elif lang == "de-DE":
-            VOICES[lang].extend(["german", "de-DE-FastPitch", "german_de"])
-        elif lang == "zh-CN":
-            VOICES[lang].extend(["chinese", "zh-CN-FastPitch", "chinese_cn"])
+    # Try to query actual voices if possible (will be added to VOICES)
+    try:
+        query_available_tts_voices()
+    except Exception as e:
+        print(f"Failed to query voices: {e}")
+        # Continue with predefined voices
     
     print(f"Initialized TTS voices: {VOICES}")
 
@@ -168,7 +204,9 @@ def get_models():
         'asr_models': ASR_MODELS,
         'tts_models': TTS_MODELS,
         'default_asr_model': DEFAULT_ASR_MODEL,
-        'default_asr_language': DEFAULT_ASR_LANGUAGE
+        'default_asr_language': DEFAULT_ASR_LANGUAGE,
+        'default_tts_model': DEFAULT_TTS_MODEL,
+        'default_tts_language': DEFAULT_TTS_LANGUAGE
     })
 
 @app.route('/transcribe', methods=['POST'])
@@ -496,10 +534,28 @@ def synthesize_speech():
         return jsonify({'error': 'No text provided'}), 400
     
     text = data['text']
-    language = data.get('language', 'en-US')
+    language = data.get('language', DEFAULT_TTS_LANGUAGE)
     
     # Get voice for this language from our global dictionary
-    voices = VOICES.get(language, [language])  # Fallback to language code as voice
+    voices = VOICES.get(language, [])
+    
+    # If no voices available for this language, try to query them
+    if not voices:
+        try:
+            query_available_tts_voices()
+            voices = VOICES.get(language, [])
+        except Exception as e:
+            print(f"Error querying voices: {e}")
+    
+    # If still no voices, try the predefined voice map
+    if not voices and language in VOICE_NAME_MAP:
+        voices = VOICE_NAME_MAP[language]
+    
+    # Last fallback - use language code as voice name
+    if not voices:
+        voices = [language]
+    
+    # Use requested voice or the first available voice
     voice = data.get('voice', voices[0] if voices else language)
     
     try:
@@ -510,8 +566,21 @@ def synthesize_speech():
             voice_name=voice
         )
         
+        # If failed and we have more voice options, try alternatives
+        if not audio_data and len(voices) > 1:
+            for alt_voice in voices[1:]:
+                print(f"First voice failed, trying alternate voice: {alt_voice}")
+                audio_data = default_client.synthesize_speech(
+                    text=text,
+                    language_code=language,
+                    voice_name=alt_voice
+                )
+                if audio_data:
+                    voice = alt_voice
+                    break
+                
         if not audio_data:
-            return jsonify({'error': 'Failed to synthesize speech'}), 500
+            return jsonify({'error': 'Failed to synthesize speech with any available voice'}), 500
         
         # Create a unique filename
         filename = f"tts_{uuid.uuid4().hex}.wav"
@@ -532,7 +601,7 @@ def synthesize_speech():
         })
         
     except Exception as e:
-        return jsonify({'error': f'TTS error: {str(e)}'}, 500)
+        return jsonify({'error': f'TTS error: {str(e)}'}), 500
 
 @app.route('/tts/audio/<filename>', methods=['GET'])
 def get_tts_audio(filename):
