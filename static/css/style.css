@@ -70,6 +70,13 @@ input[type="file"] {
     font-weight: bold;
 }
 
+.help-text {
+    font-size: 0.8em;
+    color: #666;
+    margin-top: 3px;
+    margin-left: 100px;
+}
+
 select {
     padding: 8px;
     border: 1px solid #ddd;

@@ -5,9 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>NVIDIA Riva Speech Recognition Demo</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="shortcut icon" href="{{ url_for('static', filename='favicon.ico') }}">
     <script>
-        // Global variable to track TTS availability
-        const ttsAvailable = {{ 'true' if tts_available else 'false' }};
+        /* Global variable to track TTS availability */
+        var ttsAvailable = {% if tts_available %}true{% else %}false{% endif %};
     </script>
 </head>
 <body>
@@ -18,28 +19,30 @@
             <h2>Model Selection</h2>
             <div class="form-group">
                 <label for="asrModel">ASR Model:</label>
-                <select id="asrModel"></select>
+                <select id="asrModel" aria-describedby="modelHelp"></select>
+                <div id="modelHelp" class="help-text">Select an ASR model to use for transcription</div>
             </div>
             <div class="form-group">
                 <label for="asrLanguage">Language:</label>
-                <select id="asrLanguage"></select>
+                <select id="asrLanguage" aria-describedby="languageHelp"></select>
+                <div id="languageHelp" class="help-text">Select the language for transcription</div>
             </div>
         </div>
         
         <div class="section">
             <h2>Upload Audio File</h2>
-            <form id="uploadForm" enctype="multipart/form-data">
-                <input type="file" id="audioFile" name="audio" accept="audio/*">
+            <form id="uploadForm" enctype="multipart/form-data" method="post">
+                <input type="file" id="audioFile" name="audio" accept="audio/*" required aria-required="true">
                 <button type="submit">Transcribe</button>
             </form>
-            <div id="uploadResult" class="result"></div>
+            <div id="uploadResult" class="result" aria-live="polite"></div>
         </div>
         
         <div class="section">
             <h2>Live Transcription</h2>
-            <button id="startRecording">Start Recording</button>
-            <button id="stopRecording" disabled>Stop Recording</button>
-            <div id="liveResult" class="result"></div>
+            <button id="startRecording" aria-controls="liveResult">Start Recording</button>
+            <button id="stopRecording" disabled aria-controls="liveResult">Stop Recording</button>
+            <div id="liveResult" class="result" aria-live="polite"></div>
         </div>
         
         <!-- TTS section - conditionally displayed -->
@@ -55,26 +58,35 @@
             <div id="ttsControls" style="{{ '' if tts_available else 'display:none' }}">
                 <div class="form-group">
                     <label for="ttsVoice">Voice:</label>
-                    <select id="ttsVoice">
+                    <select id="ttsVoice" aria-describedby="voiceHelp">
                         <option value="English-US-Female-1">English Female</option>
                         <option value="English-US-Male-1">English Male</option>
                     </select>
+                    <div id="voiceHelp" class="help-text">Select a voice for speech synthesis</div>
                 </div>
                 <div class="form-group">
-                    <textarea id="ttsText" rows="4" placeholder="Enter text to synthesize..."></textarea>
+                    <label for="ttsText">Text to synthesize:</label>
+                    <textarea id="ttsText" rows="4" placeholder="Enter text to synthesize..." 
+                        aria-required="true" required></textarea>
                 </div>
                 <div class="button-group">
-                    <button id="ttsSynthesize">Synthesize</button>
-                    <button id="ttsPlay" disabled>Play</button>
-                    <button id="ttsStop" disabled>Stop</button>
+                    <button id="ttsSynthesize" aria-controls="ttsStatus">Synthesize</button>
+                    <button id="ttsPlay" disabled aria-controls="ttsPlayer">Play</button>
+                    <button id="ttsStop" disabled aria-controls="ttsPlayer">Stop</button>
                     <button id="ttsDownload" disabled>Download</button>
                 </div>
-                <div id="ttsStatus" class="result"></div>
-                <div id="ttsPlayer" class="audio-player"></div>
+                <div id="ttsStatus" class="result" aria-live="polite"></div>
+                <div id="ttsPlayer" class="audio-player" aria-label="Audio player for synthesized speech"></div>
             </div>
         </div>
     </div>
     
-    <script src="{{ url_for('static', filename='js/audio_recorder.js') }}"></script>
+    <noscript>
+        <div class="error-message">
+            This application requires JavaScript to function. Please enable JavaScript in your browser settings.
+        </div>
+    </noscript>
+    
+    <script src="{{ url_for('static', filename='js/audio_recorder.js') }}" defer></script>
 </body>
 </html>

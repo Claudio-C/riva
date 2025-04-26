@@ -6,93 +6,107 @@ import urllib.request
 import tempfile
 import shutil
 
-def download_tts_proto_files(target_dir):
+def download_proto_files(target_dir):
     """
-    Download Riva TTS proto files from NVIDIA's GitHub repository.
+    Download all required Riva proto files from NVIDIA's GitHub repository.
     """
-    print("Downloading Riva TTS proto files...")
+    print("Downloading Riva proto files...")
     proto_files_dir = os.path.join(target_dir, "riva", "proto")
     os.makedirs(proto_files_dir, exist_ok=True)
     
-    # URLs for the TTS proto file
-    proto_url = "https://raw.githubusercontent.com/nvidia-riva/common/main/riva/proto/riva_tts.proto"
+    # All required proto files
+    proto_files = {
+        "riva_tts.proto": "https://raw.githubusercontent.com/nvidia-riva/common/main/riva/proto/riva_tts.proto",
+        "riva_audio.proto": "https://raw.githubusercontent.com/nvidia-riva/common/main/riva/proto/riva_audio.proto",
+        "riva_common.proto": "https://raw.githubusercontent.com/nvidia-riva/common/main/riva/proto/riva_common.proto"
+    }
     
-    target_path = os.path.join(proto_files_dir, "riva_tts.proto")
-    print(f"Downloading riva_tts.proto from {proto_url}")
+    success = True
+    for proto_file, url in proto_files.items():
+        target_path = os.path.join(proto_files_dir, proto_file)
+        print(f"Downloading {proto_file} from {url}")
+        
+        try:
+            urllib.request.urlretrieve(url, target_path)
+            print(f"Downloaded {proto_file}")
+        except Exception as e:
+            print(f"Error downloading {proto_file}: {e}")
+            success = False
     
-    try:
-        urllib.request.urlretrieve(proto_url, target_path)
-        print(f"Downloaded riva_tts.proto")
-        return True
-    except Exception as e:
-        print(f"Error downloading riva_tts.proto: {e}")
-        return False
+    return success
 
-def generate_tts_protos():
+def generate_proto_code():
     """
-    Generate Python gRPC client code for Riva TTS proto files.
+    Generate Python gRPC client code for Riva proto files.
     """
     # Create proper Python package structure
     current_dir = os.path.dirname(os.path.abspath(__file__)) if __file__ else os.getcwd()
     
     # Create __init__.py files for package structure
     for pkg_dir in ["riva", "riva/proto"]:
-        os.makedirs(os.path.join(current_dir, pkg_dir), exist_ok=True)
-        with open(os.path.join(current_dir, pkg_dir, "__init__.py"), "w") as f:
+        pkg_path = os.path.join(current_dir, pkg_dir)
+        os.makedirs(pkg_path, exist_ok=True)
+        with open(os.path.join(pkg_path, "__init__.py"), "w") as f:
             pass
     
-    # Define the TTS proto file
-    tts_proto_file = "riva/proto/riva_tts.proto"
+    # Download all required proto files
+    if not download_proto_files(current_dir):
+        print("Failed to download all required proto files")
+        return False
     
-    # Check if proto file exists locally and download if needed
-    if not os.path.exists(tts_proto_file):
-        temp_dir = tempfile.mkdtemp()
+    # Define the proto files
+    proto_files = [
+        "riva/proto/riva_audio.proto",  # Must be first as it's a dependency
+        "riva/proto/riva_common.proto", # Must be second as it's a dependency
+        "riva/proto/riva_tts.proto"
+    ]
+    
+    # Generate Python code for all proto files
+    success = True
+    for proto_file in proto_files:
         try:
-            if download_tts_proto_files(temp_dir):
-                print("TTS Proto file downloaded successfully")
+            if not os.path.exists(proto_file):
+                print(f"Error: Proto file {proto_file} not found.")
+                success = False
+                continue
                 
-                # Copy downloaded proto file to current directory
-                src_path = os.path.join(temp_dir, tts_proto_file)
-                os.makedirs(os.path.dirname(tts_proto_file), exist_ok=True)
-                shutil.copy(src_path, tts_proto_file)
-                print(f"Copied riva_tts.proto to {tts_proto_file}")
-            else:
-                print("Failed to download TTS proto file")
-                return
-        finally:
-            shutil.rmtree(temp_dir)
-    
-    # Generate Python code for the TTS proto file
-    try:
-        if not os.path.exists(tts_proto_file):
-            print(f"Error: TTS proto file {tts_proto_file} not found.")
-            return
+            print(f"Generating gRPC code for {proto_file}")
             
-        print(f"Generating gRPC code for {tts_proto_file}")
-        
-        # Generate directly in the proto directory
-        cmd = [
-            sys.executable, "-m", "grpc_tools.protoc",
-            "--proto_path=.",
-            f"--python_out={current_dir}",
-            f"--grpc_python_out={current_dir}",
-            tts_proto_file
-        ]
-        subprocess.check_call(cmd)
-        
-        # Find the generated files and print their locations
-        pb2_file = tts_proto_file.replace(".proto", "_pb2.py")
-        pb2_grpc_file = tts_proto_file.replace(".proto", "_pb2_grpc.py")
-        
-        for file_path in [pb2_file, pb2_grpc_file]:
-            if os.path.exists(file_path):
-                print(f"Generated: {file_path}")
+            cmd = [
+                sys.executable, "-m", "grpc_tools.protoc",
+                "--proto_path=.",
+                f"--python_out={current_dir}",
+                f"--grpc_python_out={current_dir}",
+                proto_file
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                print(f"Error generating code for {proto_file}: {result.stderr}")
+                success = False
             else:
-                print(f"Warning: Expected file {file_path} not found")
-        
-        print("Successfully generated TTS proto code")
-    except Exception as e:
-        print(f"Error generating TTS proto code: {e}")
+                print(f"Successfully generated code for {proto_file}")
+                
+                # Find the generated files and print their paths
+                pb2_file = proto_file.replace(".proto", "_pb2.py")
+                pb2_grpc_file = proto_file.replace(".proto", "_pb2_grpc.py")
+                
+                for file_path in [pb2_file, pb2_grpc_file]:
+                    if os.path.exists(file_path):
+                        print(f"Generated: {file_path}")
+                    else:
+                        print(f"Warning: Expected file {file_path} not found")
+            
+        except Exception as e:
+            print(f"Error processing {proto_file}: {e}")
+            success = False
+    
+    return success
 
 if __name__ == "__main__":
-    generate_tts_protos()
+    if generate_proto_code():
+        print("\nSuccessfully generated all proto code!")
+        print("You can now use TTS functionality in the application.")
+    else:
+        print("\nThere were errors generating proto code.")
+        print("TTS functionality may not be available.")
