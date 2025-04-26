@@ -54,3 +54,33 @@ button:disabled {
 input[type="file"] {
     margin-bottom: 10px;
 }
+
+.model-selection {
+    background-color: #f0f8ff;
+    border-left: 4px solid #76b900;
+}
+
+.form-group {
+    margin-bottom: 15px;
+}
+
+.form-group label {
+    display: inline-block;
+    width: 100px;
+    font-weight: bold;
+}
+
+select {
+    padding: 8px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    min-width: 200px;
+    background-color: white;
+}
+
+.model-info {
+    margin-top: 5px;
+    font-size: 0.9em;
+    color: #666;
+    font-style: italic;
+}

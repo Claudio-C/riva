@@ -30,7 +30,30 @@ SSL_KEY_FILE = next((path for path in SSL_KEY_PATHS if os.path.exists(path)), SS
 
 # Riva client configuration
 RIVA_SERVER = "localhost:50051"  # Default Riva server address
-riva_client = RivaClient(RIVA_SERVER)
+
+# Available ASR models and languages based on server configuration
+ASR_MODELS = {
+    "conformer": ["ar-AR", "en-US", "en-GB", "de-DE", "es-ES", "es-US", "fr-FR", "hi-IN", "it-IT", "ja-JP", "ru-RU", "ko-KR", "pt-BR", "zh-CN", "nl-NL", "nl-BE"],
+    "conformer_xl": ["en-US"],
+    "conformer_unified": ["de-DE", "ja-JP", "zh-CN"],
+    "whisper_large": ["multi"],
+    "canary_1b": ["multi"]
+}
+
+# Available TTS models and languages
+TTS_MODELS = {
+    "fastpitch_hifigan": ["en-US", "es-ES", "es-US", "it-IT", "de-DE", "zh-CN"],
+    "magpie": ["multi"],
+    "radtts_hifigan": ["en-US"]
+}
+
+# Default model and language selections
+DEFAULT_ASR_MODEL = "conformer"
+DEFAULT_ASR_LANGUAGE = "en-US"
+
+# Create a dictionary to store client instances per model/language combo
+riva_clients = {}
+default_client = RivaClient(RIVA_SERVER)
 
 # Store active streaming sessions
 active_sessions = {}
@@ -40,13 +63,41 @@ def index():
     """Render the main page."""
     return render_template('index.html')
 
+@app.route('/get_models', methods=['GET'])
+def get_models():
+    """Return available ASR and TTS models and languages."""
+    return jsonify({
+        'asr_models': ASR_MODELS,
+        'tts_models': TTS_MODELS,
+        'default_asr_model': DEFAULT_ASR_MODEL,
+        'default_asr_language': DEFAULT_ASR_LANGUAGE
+    })
+
 @app.route('/transcribe', methods=['POST'])
 def transcribe():
-    """Transcribe uploaded audio file."""
+    """Transcribe uploaded audio file with selected model and language."""
     if 'audio' not in request.files:
         return jsonify({'error': 'No audio file uploaded'}), 400
     
     audio_file = request.files['audio']
+    
+    # Get model and language selection from request or use defaults
+    asr_model = request.form.get('asr_model', DEFAULT_ASR_MODEL)
+    asr_language = request.form.get('asr_language', DEFAULT_ASR_LANGUAGE)
+    
+    # Validate model and language
+    if asr_model not in ASR_MODELS:
+        return jsonify({'error': f'Invalid ASR model: {asr_model}'}), 400
+    
+    if asr_language not in ASR_MODELS[asr_model] and ASR_MODELS[asr_model][0] != "multi":
+        return jsonify({'error': f'Language {asr_language} not supported for model {asr_model}'}), 400
+    
+    # Create or get client for this model/language combination
+    client_key = f"{asr_model}_{asr_language}"
+    if client_key not in riva_clients:
+        riva_clients[client_key] = RivaClient(RIVA_SERVER)
+    
+    client = riva_clients[client_key]
     
     # Save the uploaded file temporarily
     with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp_file:
@@ -67,19 +118,24 @@ def transcribe():
         # Get sample rate from request or use default
         sample_rate = int(request.form.get('sample_rate', 16000))
         
-        # Get transcription
+        # Get transcription with specified model and language
         results = []
         final_text = ""
         
-        for result in riva_client.transcribe_stream(
+        for result in client.transcribe_stream(
             audio_chunks(), 
-            sample_rate_hz=sample_rate
+            sample_rate_hz=sample_rate,
+            language_code=asr_language
         ):
             if result['is_final']:
                 final_text = result['transcript']
                 results.append(final_text)
         
-        return jsonify({'transcription': ' '.join(results) if results else final_text})
+        return jsonify({
+            'transcription': ' '.join(results) if results else final_text,
+            'model': asr_model,
+            'language': asr_language
+        })
     
     finally:
         # Clean up temporary file
@@ -88,15 +144,34 @@ def transcribe():
 
 @app.route('/stream_start', methods=['POST'])
 def stream_start():
-    """Initialize a streaming session."""
+    """Initialize a streaming session with selected model and language."""
     session_id = str(uuid.uuid4())
     
+    # Get model and language selection from request or use defaults
+    data = request.json or {}
+    asr_model = data.get('asr_model', DEFAULT_ASR_MODEL)
+    asr_language = data.get('asr_language', DEFAULT_ASR_LANGUAGE)
+    
+    # Validate model and language
+    if asr_model not in ASR_MODELS:
+        return jsonify({'error': f'Invalid ASR model: {asr_model}'}), 400
+    
+    if asr_language not in ASR_MODELS[asr_model] and ASR_MODELS[asr_model][0] != "multi":
+        return jsonify({'error': f'Language {asr_language} not supported for model {asr_model}'}), 400
+    
     # Get sample rate from request or use default
-    sample_rate = int(request.args.get('sample_rate', 16000))
+    sample_rate = int(data.get('sample_rate', 16000))
     
     # Create queues for audio data and results
     audio_queue = queue.Queue()
     results_queue = queue.Queue()
+    
+    # Create or get client for this model/language combination
+    client_key = f"{asr_model}_{asr_language}"
+    if client_key not in riva_clients:
+        riva_clients[client_key] = RivaClient(RIVA_SERVER)
+    
+    client = riva_clients[client_key]
     
     # Store session info
     active_sessions[session_id] = {
@@ -105,16 +180,20 @@ def stream_start():
         'results_queue': results_queue,
         'results': [],
         'complete': False,
-        'sample_rate': sample_rate
+        'sample_rate': sample_rate,
+        'asr_model': asr_model,
+        'asr_language': asr_language,
+        'client': client
     }
     
     # Start a dedicated thread for this streaming session
     def session_thread():
         try:
-            riva_client.create_streaming_session(
+            client.create_streaming_session(
                 audio_queue=audio_queue,
                 results_queue=results_queue,
-                sample_rate_hz=sample_rate
+                sample_rate_hz=sample_rate,
+                language_code=asr_language
             )
         except Exception as e:
             print(f"Error in session thread {session_id}: {e}")
@@ -131,7 +210,11 @@ def stream_start():
     # Store thread in session
     active_sessions[session_id]['thread'] = thread
     
-    return jsonify({'session_id': session_id})
+    return jsonify({
+        'session_id': session_id,
+        'model': asr_model,
+        'language': asr_language
+    })
 
 @app.route('/stream_audio/<session_id>', methods=['POST'])
 def stream_audio(session_id):
@@ -220,7 +303,11 @@ def stream_stop(session_id):
     
     threading.Thread(target=cleanup_session).start()
     
-    return jsonify({'final_transcription': final_transcription})
+    return jsonify({
+        'final_transcription': final_transcription,
+        'model': session['asr_model'],
+        'language': session['asr_language']
+    })
 
 @app.route('/health', methods=['GET'])
 def health_check():
