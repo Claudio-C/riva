@@ -37,6 +37,29 @@
             <button id="stopRecording" disabled>Stop Recording</button>
             <div id="liveResult" class="result"></div>
         </div>
+        
+        <!-- New TTS section -->
+        <div class="section tts-section">
+            <h2>Text-to-Speech</h2>
+            <div class="form-group">
+                <label for="ttsVoice">Voice:</label>
+                <select id="ttsVoice">
+                    <option value="English-US-Female-1">English Female</option>
+                    <option value="English-US-Male-1">English Male</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <textarea id="ttsText" rows="4" placeholder="Enter text to synthesize..."></textarea>
+            </div>
+            <div class="button-group">
+                <button id="ttsSynthesize">Synthesize</button>
+                <button id="ttsPlay" disabled>Play</button>
+                <button id="ttsStop" disabled>Stop</button>
+                <button id="ttsDownload" disabled>Download</button>
+            </div>
+            <div id="ttsStatus" class="result"></div>
+            <div id="ttsPlayer" class="audio-player"></div>
+        </div>
     </div>
     
     <script src="{{ url_for('static', filename='js/audio_recorder.js') }}"></script>

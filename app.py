@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify, Response, stream_with_context, redirect, url_for
+from flask import Flask, render_template, request, jsonify, Response, stream_with_context, redirect, url_for, send_file
 import os
 import tempfile
 import uuid
@@ -7,6 +7,7 @@ import json
 import time
 import ssl
 import queue
+import io
 from riva_client import RivaClient
 
 app = Flask(__name__, static_folder='static', template_folder='templates')
@@ -57,6 +58,11 @@ default_client = RivaClient(RIVA_SERVER)
 
 # Store active streaming sessions
 active_sessions = {}
+
+# Add TTS voice options
+VOICES = {
+    "en-US": ["English-US-Female-1", "English-US-Male-1"]
+}
 
 @app.route('/')
 def index():
@@ -341,6 +347,115 @@ def ssl_check():
         'checked_cert_paths': SSL_CERT_PATHS,
         'checked_key_paths': SSL_KEY_PATHS
     })
+
+@app.route('/tts/voices', methods=['GET'])
+def get_tts_voices():
+    """Get available TTS voices for a language."""
+    language = request.args.get('language', 'en-US')
+    
+    try:
+        voices = riva_client.get_available_voices(language)
+        return jsonify({
+            'voices': voices,
+            'default_voice': voices[0] if voices else None
+        })
+    except Exception as e:
+        return jsonify({
+            'voices': VOICES.get(language, []),
+            'default_voice': VOICES.get(language, [])[0] if VOICES.get(language, []) else None,
+            'error': str(e)
+        })
+
+@app.route('/tts/synthesize', methods=['POST'])
+def synthesize_speech():
+    """Synthesize speech from text."""
+    data = request.json
+    
+    if not data or 'text' not in data:
+        return jsonify({'error': 'No text provided'}), 400
+    
+    text = data['text']
+    language = data.get('language', 'en-US')
+    voice = data.get('voice', VOICES.get(language, [])[0] if VOICES.get(language, []) else "English-US-Female-1")
+    
+    try:
+        # Generate audio
+        audio_data = riva_client.synthesize_speech(
+            text=text,
+            language_code=language,
+            voice_name=voice
+        )
+        
+        if not audio_data:
+            return jsonify({'error': 'Failed to synthesize speech'}), 500
+        
+        # Create a unique filename
+        filename = f"tts_{uuid.uuid4().hex}.wav"
+        filepath = os.path.join(tempfile.gettempdir(), filename)
+        
+        # Write audio to WAV file
+        with wave.open(filepath, 'wb') as wav_file:
+            wav_file.setnchannels(1)  # Mono
+            wav_file.setsampwidth(2)  # 16-bit
+            wav_file.setframerate(22050)  # Sample rate
+            wav_file.writeframes(audio_data)
+        
+        # Return file path (to be used for playback)
+        return jsonify({
+            'audio_file': filename,
+            'text': text,
+            'voice': voice
+        })
+        
+    except Exception as e:
+        return jsonify({'error': f'TTS error: {str(e)}'}), 500
+
+@app.route('/tts/audio/<filename>', methods=['GET'])
+def get_tts_audio(filename):
+    """Serve synthesized audio file."""
+    filepath = os.path.join(tempfile.gettempdir(), filename)
+    
+    if not os.path.exists(filepath):
+        return jsonify({'error': 'Audio file not found'}), 404
+    
+    try:
+        return send_file(
+            filepath,
+            mimetype='audio/wav',
+            as_attachment=True,
+            download_name=filename
+        )
+    except Exception as e:
+        return jsonify({'error': f'Error serving audio file: {str(e)}'}), 500
+
+@app.route('/tts/stream', methods=['POST'])
+def stream_tts():
+    """Stream synthesized speech."""
+    data = request.json
+    
+    if not data or 'text' not in data:
+        return jsonify({'error': 'No text provided'}), 400
+    
+    text = data['text']
+    language = data.get('language', 'en-US')
+    voice = data.get('voice', VOICES.get(language, [])[0] if VOICES.get(language, []) else "English-US-Female-1")
+    
+    def generate():
+        try:
+            for audio_chunk in riva_client.stream_synthesize_speech(
+                text=text,
+                language_code=language,
+                voice_name=voice
+            ):
+                if audio_chunk:
+                    yield audio_chunk
+        except Exception as e:
+            print(f"Error streaming TTS: {e}")
+    
+    return Response(
+        stream_with_context(generate()),
+        mimetype='audio/wav'
+    )
 
 def check_ssl_config():
     """Check if SSL certificates exist and are valid."""

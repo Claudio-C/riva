@@ -8,6 +8,20 @@ document.addEventListener('DOMContentLoaded', function() {
     const asrModelSelect = document.getElementById('asrModel');
     const asrLanguageSelect = document.getElementById('asrLanguage');
     
+    // TTS Elements
+    const ttsVoiceSelect = document.getElementById('ttsVoice');
+    const ttsTextArea = document.getElementById('ttsText');
+    const ttsSynthesizeBtn = document.getElementById('ttsSynthesize');
+    const ttsPlayBtn = document.getElementById('ttsPlay');
+    const ttsStopBtn = document.getElementById('ttsStop');
+    const ttsDownloadBtn = document.getElementById('ttsDownload');
+    const ttsStatus = document.getElementById('ttsStatus');
+    const ttsPlayer = document.getElementById('ttsPlayer');
+    
+    // TTS variables
+    let currentTtsAudioFile = null;
+    let audioPlayer = null;
+    
     // Model and language variables
     let availableModels = {};
     let currentModel = '';
@@ -316,4 +330,176 @@ document.addEventListener('DOMContentLoaded', function() {
             audioContext.close().catch(e => console.error('Error closing AudioContext:', e));
         }
     }
+    
+    // TTS Functions
+    
+    // Load available TTS voices for selected language
+    function loadTtsVoices(language) {
+        fetch(`/tts/voices?language=${language}`)
+            .then(response => response.json())
+            .then(data => {
+                // Clear existing options
+                ttsVoiceSelect.innerHTML = '';
+                
+                // Add available voices or defaults
+                const voices = data.voices || ['English-US-Female-1', 'English-US-Male-1'];
+                
+                voices.forEach(voice => {
+                    const option = document.createElement('option');
+                    option.value = voice;
+                    option.textContent = formatVoiceName(voice);
+                    ttsVoiceSelect.appendChild(option);
+                });
+                
+                // Set default voice
+                if (data.default_voice) {
+                    ttsVoiceSelect.value = data.default_voice;
+                }
+            })
+            .catch(error => {
+                console.error('Error loading TTS voices:', error);
+                // Add default voices as fallback
+                ttsVoiceSelect.innerHTML = '';
+                
+                ['English-US-Female-1', 'English-US-Male-1'].forEach(voice => {
+                    const option = document.createElement('option');
+                    option.value = voice;
+                    option.textContent = formatVoiceName(voice);
+                    ttsVoiceSelect.appendChild(option);
+                });
+            });
+    }
+    
+    // Format voice name for display
+    function formatVoiceName(voice) {
+        // Convert names like "English-US-Female-1" to "English Female 1"
+        const parts = voice.split('-');
+        if (parts.length >= 3) {
+            const language = parts[0];
+            const gender = parts[2];
+            const number = parts.length > 3 ? parts[3] : '';
+            return `${language} ${gender} ${number}`.trim();
+        }
+        return voice;
+    }
+    
+    // Handle TTS synthesis
+    ttsSynthesizeBtn.addEventListener('click', function() {
+        const text = ttsTextArea.value.trim();
+        
+        if (!text) {
+            ttsStatus.textContent = 'Please enter text to synthesize';
+            return;
+        }
+        
+        // Clear previous audio
+        if (audioPlayer) {
+            audioPlayer.pause();
+            audioPlayer.remove();
+            audioPlayer = null;
+        }
+        
+        ttsStatus.textContent = 'Synthesizing speech...';
+        ttsPlayBtn.disabled = true;
+        ttsStopBtn.disabled = true;
+        ttsDownloadBtn.disabled = true;
+        
+        // Send synthesis request
+        fetch('/tts/synthesize', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                text: text,
+                language: currentLanguage,
+                voice: ttsVoiceSelect.value
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                ttsStatus.textContent = `Error: ${data.error}`;
+                return;
+            }
+            
+            // Store audio file reference
+            currentTtsAudioFile = data.audio_file;
+            
+            // Create audio player
+            audioPlayer = new Audio(`/tts/audio/${data.audio_file}`);
+            ttsPlayer.innerHTML = '';
+            ttsPlayer.appendChild(audioPlayer);
+            
+            // Update UI
+            ttsStatus.textContent = 'Speech synthesized successfully.';
+            ttsPlayBtn.disabled = false;
+            ttsDownloadBtn.disabled = false;
+            
+            // Add event listeners to audio player
+            audioPlayer.addEventListener('ended', function() {
+                ttsPlayBtn.textContent = 'Play';
+                ttsStopBtn.disabled = true;
+            });
+            
+            audioPlayer.addEventListener('play', function() {
+                ttsPlayBtn.textContent = 'Pause';
+                ttsStopBtn.disabled = false;
+            });
+            
+            audioPlayer.addEventListener('pause', function() {
+                ttsPlayBtn.textContent = 'Play';
+            });
+        })
+        .catch(error => {
+            ttsStatus.textContent = `Error: ${error.message}`;
+        });
+    });
+    
+    // Handle play/pause button
+    ttsPlayBtn.addEventListener('click', function() {
+        if (!audioPlayer) return;
+        
+        if (audioPlayer.paused) {
+            audioPlayer.play();
+            ttsPlayBtn.textContent = 'Pause';
+            ttsStopBtn.disabled = false;
+        } else {
+            audioPlayer.pause();
+            ttsPlayBtn.textContent = 'Play';
+        }
+    });
+    
+    // Handle stop button
+    ttsStopBtn.addEventListener('click', function() {
+        if (!audioPlayer) return;
+        
+        audioPlayer.pause();
+        audioPlayer.currentTime = 0;
+        ttsPlayBtn.textContent = 'Play';
+        ttsStopBtn.disabled = true;
+    });
+    
+    // Handle download button
+    ttsDownloadBtn.addEventListener('click', function() {
+        if (!currentTtsAudioFile) return;
+        
+        // Create a download link
+        const downloadLink = document.createElement('a');
+        downloadLink.href = `/tts/audio/${currentTtsAudioFile}`;
+        downloadLink.download = `riva_tts_${Date.now()}.wav`;
+        document.body.appendChild(downloadLink);
+        downloadLink.click();
+        document.body.removeChild(downloadLink);
+    });
+    
+    // Initial setup
+    // Load TTS voices for default language (en-US)
+    loadTtsVoices('en-US');
+    
+    // Update TTS voices when language changes
+    asrLanguageSelect.addEventListener('change', function() {
+        // This ensures TTS voices match the selected language
+        loadTtsVoices(this.value);
+    });
 });

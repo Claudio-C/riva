@@ -6,6 +6,7 @@ import os
 import sys
 import glob
 import queue
+import shutil
 from typing import Generator, List, Optional
 
 # Add current directory to Python path
@@ -46,7 +47,7 @@ if proto_path:
     sys.path.insert(0, proto_path)
 
 # Try different import strategies
-rasr = rasr_srv = ra = None
+rasr = rasr_srv = ra = rtts = rtts_srv = None
 import_success = False
 
 # First strategy: standard import from package
@@ -55,6 +56,8 @@ try:
     from riva.proto import riva_asr_pb2 as rasr
     from riva.proto import riva_asr_pb2_grpc as rasr_srv
     from riva.proto import riva_audio_pb2 as ra
+    from riva.proto import riva_tts_pb2 as rtts
+    from riva.proto import riva_tts_pb2_grpc as rtts_srv
     print("Success: Imported from riva.proto package")
     import_success = True
 except ImportError as e:
@@ -67,6 +70,8 @@ if not import_success:
         import riva_asr_pb2 as rasr
         import riva_asr_pb2_grpc as rasr_srv
         import riva_audio_pb2 as ra
+        import riva_tts_pb2 as rtts
+        import riva_tts_pb2_grpc as rtts_srv
         print("Success: Imported directly")
         import_success = True
     except ImportError as e:
@@ -93,6 +98,8 @@ if not import_success:
             from riva.proto import riva_asr_pb2 as rasr
             from riva.proto import riva_asr_pb2_grpc as rasr_srv
             from riva.proto import riva_audio_pb2 as ra
+            from riva.proto import riva_tts_pb2 as rtts
+            from riva.proto import riva_tts_pb2_grpc as rtts_srv
             print("Success: Imported after fixing file locations")
             import_success = True
     except Exception as e:
@@ -104,7 +111,7 @@ if not import_success:
     sys.exit(1)
 
 class RivaClient:
-    """Client class for Riva ASR service."""
+    """Client class for Riva ASR and TTS services."""
     
     def __init__(self, server_address: str = "localhost:50051"):
         """
@@ -118,8 +125,9 @@ class RivaClient:
         # Create a gRPC channel
         self.channel = grpc.insecure_channel(server_address)
         
-        # Create a stub (client)
+        # Create stubs (clients)
         self.asr_client = rasr_srv.RivaSpeechRecognitionStub(self.channel)
+        self.tts_client = rtts_srv.RivaSpeechSynthesisStub(self.channel)
     
     def transcribe_stream(self, audio_stream: Generator[bytes, None, None], 
                          sample_rate_hz: int = 16000,
@@ -265,6 +273,106 @@ class RivaClient:
                 'error': True,
                 'timestamp': time.time()
             })
+    
+    def synthesize_speech(self, 
+                        text: str, 
+                        language_code: str = "en-US",
+                        voice_name: str = "English-US-Female-1",
+                        sample_rate_hz: int = 22050) -> bytes:
+        """
+        Synthesize speech from text using Riva TTS.
+        
+        Args:
+            text: Text to synthesize
+            language_code: Language code for synthesis
+            voice_name: Voice to use for synthesis
+            sample_rate_hz: Output audio sample rate
+            
+        Returns:
+            Audio data as bytes
+        """
+        try:
+            # Create synthesis request
+            request = rtts.SynthesizeSpeechRequest(
+                text=text,
+                language_code=language_code,
+                encoding=ra.AudioEncoding.LINEAR_PCM,
+                sample_rate_hertz=sample_rate_hz,
+                voice_name=voice_name
+            )
+            
+            # Call the service
+            response = self.tts_client.Synthesize(request)
+            
+            # Return the audio data
+            return response.audio
+            
+        except Exception as e:
+            print(f"Error in Riva synthesize_speech: {e}")
+            return None
+    
+    def get_available_voices(self, language_code: str = "en-US") -> List[str]:
+        """
+        Get available TTS voices for the specified language.
+        
+        Args:
+            language_code: Language code to query voices for
+            
+        Returns:
+            List of available voice names
+        """
+        try:
+            # Create request
+            request = rtts.ListVoicesRequest(language_code=language_code)
+            
+            # Call the service
+            response = self.tts_client.ListVoices(request)
+            
+            # Return voice names
+            return [voice.name for voice in response.voices]
+            
+        except Exception as e:
+            print(f"Error getting available voices: {e}")
+            # Return default voices for English
+            return ["English-US-Female-1", "English-US-Male-1"]
+
+    def stream_synthesize_speech(self, 
+                              text: str, 
+                              language_code: str = "en-US",
+                              voice_name: str = "English-US-Female-1",
+                              sample_rate_hz: int = 22050) -> Generator[bytes, None, None]:
+        """
+        Stream synthesized speech from text using Riva TTS.
+        
+        Args:
+            text: Text to synthesize
+            language_code: Language code for synthesis
+            voice_name: Voice to use for synthesis
+            sample_rate_hz: Output audio sample rate
+            
+        Yields:
+            Audio data chunks as bytes
+        """
+        try:
+            # Create synthesis request
+            request = rtts.SynthesizeSpeechRequest(
+                text=text,
+                language_code=language_code,
+                encoding=ra.AudioEncoding.LINEAR_PCM,
+                sample_rate_hertz=sample_rate_hz,
+                voice_name=voice_name
+            )
+            
+            # Call the service
+            responses = self.tts_client.SynthesizeStreaming(request)
+            
+            # Yield audio chunks
+            for response in responses:
+                yield response.audio
+                
+        except Exception as e:
+            print(f"Error in Riva stream_synthesize_speech: {e}")
+            yield None
     
     def close(self):
         """Close the gRPC channel."""
