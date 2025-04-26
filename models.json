@@ -1,0 +1,14 @@
+{
+  "asr_models": {
+    "conformer-streaming": ["en-US"],
+    "conformer-offline": ["en-US"],
+    "conformer-streaming-throughput": ["en-US"]
+  },
+  "tts_models": {
+    "fastpitch_hifigan": ["en-US"]
+  },
+  "default_asr_model": "conformer-streaming",
+  "default_asr_language": "en-US",
+  "default_tts_model": "fastpitch_hifigan",
+  "default_tts_language": "en-US"
+}
