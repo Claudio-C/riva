@@ -47,7 +47,9 @@ if proto_path:
     sys.path.insert(0, proto_path)
 
 # Try different import strategies
-rasr = rasr_srv = ra = rtts = rtts_srv = None
+rasr = rasr_srv = ra = None
+tts_available = False  # Flag to track TTS availability
+rtts = rtts_srv = None
 import_success = False
 
 # First strategy: standard import from package
@@ -56,9 +58,18 @@ try:
     from riva.proto import riva_asr_pb2 as rasr
     from riva.proto import riva_asr_pb2_grpc as rasr_srv
     from riva.proto import riva_audio_pb2 as ra
-    from riva.proto import riva_tts_pb2 as rtts
-    from riva.proto import riva_tts_pb2_grpc as rtts_srv
-    print("Success: Imported from riva.proto package")
+    
+    # Try to import TTS modules but continue if not available
+    try:
+        from riva.proto import riva_tts_pb2 as rtts
+        from riva.proto import riva_tts_pb2_grpc as rtts_srv
+        tts_available = True
+        print("TTS modules successfully imported")
+    except ImportError as e:
+        print(f"TTS modules not available: {e}")
+        print("TTS functionality will be disabled")
+    
+    print("Success: Imported ASR modules from riva.proto package")
     import_success = True
 except ImportError as e:
     print(f"Error importing from riva.proto: {e}")
@@ -70,9 +81,18 @@ if not import_success:
         import riva_asr_pb2 as rasr
         import riva_asr_pb2_grpc as rasr_srv
         import riva_audio_pb2 as ra
-        import riva_tts_pb2 as rtts
-        import riva_tts_pb2_grpc as rtts_srv
-        print("Success: Imported directly")
+        
+        # Try to import TTS modules but continue if not available
+        try:
+            import riva_tts_pb2 as rtts
+            import riva_tts_pb2_grpc as rtts_srv
+            tts_available = True
+            print("TTS modules successfully imported")
+        except ImportError as e:
+            print(f"TTS modules not available: {e}")
+            print("TTS functionality will be disabled")
+        
+        print("Success: Imported ASR modules directly")
         import_success = True
     except ImportError as e:
         print(f"Error with direct import: {e}")
@@ -98,9 +118,18 @@ if not import_success:
             from riva.proto import riva_asr_pb2 as rasr
             from riva.proto import riva_asr_pb2_grpc as rasr_srv
             from riva.proto import riva_audio_pb2 as ra
-            from riva.proto import riva_tts_pb2 as rtts
-            from riva.proto import riva_tts_pb2_grpc as rtts_srv
-            print("Success: Imported after fixing file locations")
+            
+            # Try to import TTS modules but continue if not available
+            try:
+                from riva.proto import riva_tts_pb2 as rtts
+                from riva.proto import riva_tts_pb2_grpc as rtts_srv
+                tts_available = True
+                print("TTS modules successfully imported")
+            except ImportError as e:
+                print(f"TTS modules not available: {e}")
+                print("TTS functionality will be disabled")
+            
+            print("Success: Imported ASR modules after fixing file locations")
             import_success = True
     except Exception as e:
         print(f"Error fixing proto files: {e}")
@@ -111,7 +140,7 @@ if not import_success:
     sys.exit(1)
 
 class RivaClient:
-    """Client class for Riva ASR and TTS services."""
+    """Client class for Riva ASR service."""
     
     def __init__(self, server_address: str = "localhost:50051"):
         """
@@ -121,13 +150,17 @@ class RivaClient:
             server_address: The address of the Riva server (host:port)
         """
         self.server_address = server_address
+        self.tts_available = tts_available
         
         # Create a gRPC channel
         self.channel = grpc.insecure_channel(server_address)
         
-        # Create stubs (clients)
+        # Create a stub (client) for ASR
         self.asr_client = rasr_srv.RivaSpeechRecognitionStub(self.channel)
-        self.tts_client = rtts_srv.RivaSpeechSynthesisStub(self.channel)
+        
+        # Create a stub for TTS if available
+        if self.tts_available:
+            self.tts_client = rtts_srv.RivaSpeechSynthesisStub(self.channel)
     
     def transcribe_stream(self, audio_stream: Generator[bytes, None, None], 
                          sample_rate_hz: int = 16000,
@@ -275,10 +308,10 @@ class RivaClient:
             })
     
     def synthesize_speech(self, 
-                        text: str, 
-                        language_code: str = "en-US",
-                        voice_name: str = "English-US-Female-1",
-                        sample_rate_hz: int = 22050) -> bytes:
+                       text: str, 
+                       language_code: str = "en-US",
+                       voice_name: str = "English-US-Female-1",
+                       sample_rate_hz: int = 22050) -> Optional[bytes]:
         """
         Synthesize speech from text using Riva TTS.
         
@@ -289,8 +322,12 @@ class RivaClient:
             sample_rate_hz: Output audio sample rate
             
         Returns:
-            Audio data as bytes
+            Audio data as bytes or None if TTS is unavailable
         """
+        if not self.tts_available:
+            print("TTS functionality is not available")
+            return None
+            
         try:
             # Create synthesis request
             request = rtts.SynthesizeSpeechRequest(
@@ -321,6 +358,10 @@ class RivaClient:
         Returns:
             List of available voice names
         """
+        if not self.tts_available:
+            print("TTS functionality is not available")
+            return ["English-US-Female-1", "English-US-Male-1"]  # Default voices
+            
         try:
             # Create request
             request = rtts.ListVoicesRequest(language_code=language_code)
@@ -335,7 +376,7 @@ class RivaClient:
             print(f"Error getting available voices: {e}")
             # Return default voices for English
             return ["English-US-Female-1", "English-US-Male-1"]
-
+    
     def stream_synthesize_speech(self, 
                               text: str, 
                               language_code: str = "en-US",
@@ -353,6 +394,11 @@ class RivaClient:
         Yields:
             Audio data chunks as bytes
         """
+        if not self.tts_available:
+            print("TTS functionality is not available")
+            yield None
+            return
+        
         try:
             # Create synthesis request
             request = rtts.SynthesizeSpeechRequest(

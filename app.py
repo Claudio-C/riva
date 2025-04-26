@@ -8,7 +8,7 @@ import time
 import ssl
 import queue
 import io
-from riva_client import RivaClient
+from riva_client import RivaClient, tts_available
 
 app = Flask(__name__, static_folder='static', template_folder='templates')
 
@@ -67,7 +67,7 @@ VOICES = {
 @app.route('/')
 def index():
     """Render the main page."""
-    return render_template('index.html')
+    return render_template('index.html', tts_available=tts_available)
 
 @app.route('/get_models', methods=['GET'])
 def get_models():
@@ -348,9 +348,21 @@ def ssl_check():
         'checked_key_paths': SSL_KEY_PATHS
     })
 
+@app.route('/tts/available', methods=['GET'])
+def check_tts_available():
+    """Check if TTS functionality is available."""
+    return jsonify({'available': tts_available})
+
 @app.route('/tts/voices', methods=['GET'])
 def get_tts_voices():
     """Get available TTS voices for a language."""
+    if not tts_available:
+        return jsonify({
+            'voices': VOICES.get('en-US', []),
+            'default_voice': VOICES.get('en-US', [])[0] if VOICES.get('en-US', []) else None,
+            'error': 'TTS functionality not available'
+        })
+    
     language = request.args.get('language', 'en-US')
     
     try:
@@ -369,6 +381,9 @@ def get_tts_voices():
 @app.route('/tts/synthesize', methods=['POST'])
 def synthesize_speech():
     """Synthesize speech from text."""
+    if not tts_available:
+        return jsonify({'error': 'TTS functionality not available'}), 503
+    
     data = request.json
     
     if not data or 'text' not in data:
@@ -408,7 +423,7 @@ def synthesize_speech():
         })
         
     except Exception as e:
-        return jsonify({'error': f'TTS error: {str(e)}'}), 500
+        return jsonify({'error': f'TTS error: {str(e)}')}), 500
 
 @app.route('/tts/audio/<filename>', methods=['GET'])
 def get_tts_audio(filename):

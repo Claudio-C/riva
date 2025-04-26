@@ -8,15 +8,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const asrModelSelect = document.getElementById('asrModel');
     const asrLanguageSelect = document.getElementById('asrLanguage');
     
-    // TTS Elements
-    const ttsVoiceSelect = document.getElementById('ttsVoice');
-    const ttsTextArea = document.getElementById('ttsText');
-    const ttsSynthesizeBtn = document.getElementById('ttsSynthesize');
-    const ttsPlayBtn = document.getElementById('ttsPlay');
-    const ttsStopBtn = document.getElementById('ttsStop');
-    const ttsDownloadBtn = document.getElementById('ttsDownload');
-    const ttsStatus = document.getElementById('ttsStatus');
-    const ttsPlayer = document.getElementById('ttsPlayer');
+    // TTS Elements - only access if TTS is available
+    let ttsVoiceSelect, ttsTextArea, ttsSynthesizeBtn, ttsPlayBtn, ttsStopBtn, ttsDownloadBtn, ttsStatus, ttsPlayer;
     
     // TTS variables
     let currentTtsAudioFile = null;
@@ -331,6 +324,24 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
     
+    // Check if TTS is available
+    if (typeof ttsAvailable !== 'undefined' && ttsAvailable) {
+        // Initialize TTS elements
+        ttsVoiceSelect = document.getElementById('ttsVoice');
+        ttsTextArea = document.getElementById('ttsText');
+        ttsSynthesizeBtn = document.getElementById('ttsSynthesize');
+        ttsPlayBtn = document.getElementById('ttsPlay');
+        ttsStopBtn = document.getElementById('ttsStop');
+        ttsDownloadBtn = document.getElementById('ttsDownload');
+        ttsStatus = document.getElementById('ttsStatus');
+        ttsPlayer = document.getElementById('ttsPlayer');
+        
+        // Set up TTS event handlers
+        setupTtsHandlers();
+    } else {
+        console.log('TTS functionality is not available');
+    }
+    
     // TTS Functions
     
     // Load available TTS voices for selected language
@@ -383,123 +394,128 @@ document.addEventListener('DOMContentLoaded', function() {
         return voice;
     }
     
-    // Handle TTS synthesis
-    ttsSynthesizeBtn.addEventListener('click', function() {
-        const text = ttsTextArea.value.trim();
+    function setupTtsHandlers() {
+        // If TTS is not available, don't set up handlers
+        if (!ttsVoiceSelect || !ttsSynthesizeBtn) return;
         
-        if (!text) {
-            ttsStatus.textContent = 'Please enter text to synthesize';
-            return;
-        }
-        
-        // Clear previous audio
-        if (audioPlayer) {
-            audioPlayer.pause();
-            audioPlayer.remove();
-            audioPlayer = null;
-        }
-        
-        ttsStatus.textContent = 'Synthesizing speech...';
-        ttsPlayBtn.disabled = true;
-        ttsStopBtn.disabled = true;
-        ttsDownloadBtn.disabled = true;
-        
-        // Send synthesis request
-        fetch('/tts/synthesize', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                text: text,
-                language: currentLanguage,
-                voice: ttsVoiceSelect.value
-            })
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.error) {
-                ttsStatus.textContent = `Error: ${data.error}`;
+        // Handle TTS synthesis
+        ttsSynthesizeBtn.addEventListener('click', function() {
+            const text = ttsTextArea.value.trim();
+            
+            if (!text) {
+                ttsStatus.textContent = 'Please enter text to synthesize';
                 return;
             }
             
-            // Store audio file reference
-            currentTtsAudioFile = data.audio_file;
+            // Clear previous audio
+            if (audioPlayer) {
+                audioPlayer.pause();
+                audioPlayer.remove();
+                audioPlayer = null;
+            }
             
-            // Create audio player
-            audioPlayer = new Audio(`/tts/audio/${data.audio_file}`);
-            ttsPlayer.innerHTML = '';
-            ttsPlayer.appendChild(audioPlayer);
+            ttsStatus.textContent = 'Synthesizing speech...';
+            ttsPlayBtn.disabled = true;
+            ttsStopBtn.disabled = true;
+            ttsDownloadBtn.disabled = true;
             
-            // Update UI
-            ttsStatus.textContent = 'Speech synthesized successfully.';
-            ttsPlayBtn.disabled = false;
-            ttsDownloadBtn.disabled = false;
-            
-            // Add event listeners to audio player
-            audioPlayer.addEventListener('ended', function() {
-                ttsPlayBtn.textContent = 'Play';
-                ttsStopBtn.disabled = true;
+            // Send synthesis request
+            fetch('/tts/synthesize', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    text: text,
+                    language: currentLanguage,
+                    voice: ttsVoiceSelect.value
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    ttsStatus.textContent = `Error: ${data.error}`;
+                    return;
+                }
+                
+                // Store audio file reference
+                currentTtsAudioFile = data.audio_file;
+                
+                // Create audio player
+                audioPlayer = new Audio(`/tts/audio/${data.audio_file}`);
+                ttsPlayer.innerHTML = '';
+                ttsPlayer.appendChild(audioPlayer);
+                
+                // Update UI
+                ttsStatus.textContent = 'Speech synthesized successfully.';
+                ttsPlayBtn.disabled = false;
+                ttsDownloadBtn.disabled = false;
+                
+                // Add event listeners to audio player
+                audioPlayer.addEventListener('ended', function() {
+                    ttsPlayBtn.textContent = 'Play';
+                    ttsStopBtn.disabled = true;
+                });
+                
+                audioPlayer.addEventListener('play', function() {
+                    ttsPlayBtn.textContent = 'Pause';
+                    ttsStopBtn.disabled = false;
+                });
+                
+                audioPlayer.addEventListener('pause', function() {
+                    ttsPlayBtn.textContent = 'Play';
+                });
+            })
+            .catch(error => {
+                ttsStatus.textContent = `Error: ${error.message}`;
             });
+        });
+        
+        // Handle play/pause button
+        ttsPlayBtn.addEventListener('click', function() {
+            if (!audioPlayer) return;
             
-            audioPlayer.addEventListener('play', function() {
+            if (audioPlayer.paused) {
+                audioPlayer.play();
                 ttsPlayBtn.textContent = 'Pause';
                 ttsStopBtn.disabled = false;
-            });
-            
-            audioPlayer.addEventListener('pause', function() {
+            } else {
+                audioPlayer.pause();
                 ttsPlayBtn.textContent = 'Play';
-            });
-        })
-        .catch(error => {
-            ttsStatus.textContent = `Error: ${error.message}`;
+            }
         });
-    });
-    
-    // Handle play/pause button
-    ttsPlayBtn.addEventListener('click', function() {
-        if (!audioPlayer) return;
         
-        if (audioPlayer.paused) {
-            audioPlayer.play();
-            ttsPlayBtn.textContent = 'Pause';
-            ttsStopBtn.disabled = false;
-        } else {
+        // Handle stop button
+        ttsStopBtn.addEventListener('click', function() {
+            if (!audioPlayer) return;
+            
             audioPlayer.pause();
+            audioPlayer.currentTime = 0;
             ttsPlayBtn.textContent = 'Play';
-        }
-    });
-    
-    // Handle stop button
-    ttsStopBtn.addEventListener('click', function() {
-        if (!audioPlayer) return;
+            ttsStopBtn.disabled = true;
+        });
         
-        audioPlayer.pause();
-        audioPlayer.currentTime = 0;
-        ttsPlayBtn.textContent = 'Play';
-        ttsStopBtn.disabled = true;
-    });
-    
-    // Handle download button
-    ttsDownloadBtn.addEventListener('click', function() {
-        if (!currentTtsAudioFile) return;
+        // Handle download button
+        ttsDownloadBtn.addEventListener('click', function() {
+            if (!currentTtsAudioFile) return;
+            
+            // Create a download link
+            const downloadLink = document.createElement('a');
+            downloadLink.href = `/tts/audio/${currentTtsAudioFile}`;
+            downloadLink.download = `riva_tts_${Date.now()}.wav`;
+            document.body.appendChild(downloadLink);
+            downloadLink.click();
+            document.body.removeChild(downloadLink);
+        });
         
-        // Create a download link
-        const downloadLink = document.createElement('a');
-        downloadLink.href = `/tts/audio/${currentTtsAudioFile}`;
-        downloadLink.download = `riva_tts_${Date.now()}.wav`;
-        document.body.appendChild(downloadLink);
-        downloadLink.click();
-        document.body.removeChild(downloadLink);
-    });
-    
-    // Initial setup
-    // Load TTS voices for default language (en-US)
-    loadTtsVoices('en-US');
-    
-    // Update TTS voices when language changes
-    asrLanguageSelect.addEventListener('change', function() {
-        // This ensures TTS voices match the selected language
-        loadTtsVoices(this.value);
-    });
+        // Initial setup
+        // Load TTS voices for default language (en-US)
+        loadTtsVoices('en-US');
+        
+        // Update TTS voices when language changes
+        asrLanguageSelect.addEventListener('change', function() {
+            // This ensures TTS voices match the selected language
+            loadTtsVoices(this.value);
+        });
+    }
 });

@@ -5,6 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>NVIDIA Riva Speech Recognition Demo</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script>
+        // Global variable to track TTS availability
+        const ttsAvailable = {{ 'true' if tts_available else 'false' }};
+    </script>
 </head>
 <body>
     <div class="container">
@@ -38,27 +42,36 @@
             <div id="liveResult" class="result"></div>
         </div>
         
-        <!-- New TTS section -->
-        <div class="section tts-section">
+        <!-- TTS section - conditionally displayed -->
+        <div class="section tts-section" id="ttsSection">
             <h2>Text-to-Speech</h2>
-            <div class="form-group">
-                <label for="ttsVoice">Voice:</label>
-                <select id="ttsVoice">
-                    <option value="English-US-Female-1">English Female</option>
-                    <option value="English-US-Male-1">English Male</option>
-                </select>
+            <div id="ttsNotAvailable" style="{{ 'display:none' if tts_available else '' }}">
+                <p class="warning">TTS functionality is not available. To enable TTS:</p>
+                <ol>
+                    <li>Run <code>python generate_tts_protos.py</code> to generate required proto files</li>
+                    <li>Restart the application</li>
+                </ol>
             </div>
-            <div class="form-group">
-                <textarea id="ttsText" rows="4" placeholder="Enter text to synthesize..."></textarea>
+            <div id="ttsControls" style="{{ '' if tts_available else 'display:none' }}">
+                <div class="form-group">
+                    <label for="ttsVoice">Voice:</label>
+                    <select id="ttsVoice">
+                        <option value="English-US-Female-1">English Female</option>
+                        <option value="English-US-Male-1">English Male</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <textarea id="ttsText" rows="4" placeholder="Enter text to synthesize..."></textarea>
+                </div>
+                <div class="button-group">
+                    <button id="ttsSynthesize">Synthesize</button>
+                    <button id="ttsPlay" disabled>Play</button>
+                    <button id="ttsStop" disabled>Stop</button>
+                    <button id="ttsDownload" disabled>Download</button>
+                </div>
+                <div id="ttsStatus" class="result"></div>
+                <div id="ttsPlayer" class="audio-player"></div>
             </div>
-            <div class="button-group">
-                <button id="ttsSynthesize">Synthesize</button>
-                <button id="ttsPlay" disabled>Play</button>
-                <button id="ttsStop" disabled>Stop</button>
-                <button id="ttsDownload" disabled>Download</button>
-            </div>
-            <div id="ttsStatus" class="result"></div>
-            <div id="ttsPlayer" class="audio-player"></div>
         </div>
     </div>
     
