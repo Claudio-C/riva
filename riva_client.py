@@ -329,10 +329,11 @@ class RivaClient:
             return None
             
         try:
-            # If voice_name is None or contains "Female/Male", use just the language code
-            if voice_name is None or "Female" in voice_name or "Male" in voice_name:
-                # Use simplified voice name format that should work with Riva
-                voice_name = f"{language_code.split('-')[0]}-{language_code.split('-')[1]}"
+            # If voice_name is None, use language code directly
+            if voice_name is None:
+                voice_name = language_code
+            
+            print(f"Attempting TTS with voice: '{voice_name}', language: '{language_code}'")
             
             # Create synthesis request
             request = rtts.SynthesizeSpeechRequest(
@@ -351,6 +352,23 @@ class RivaClient:
             
         except Exception as e:
             print(f"Error in Riva synthesize_speech: {e}")
+            
+            # If specified voice failed, try language code as voice name
+            if voice_name != language_code:
+                print(f"Retrying with voice name = language code: '{language_code}'")
+                try:
+                    request = rtts.SynthesizeSpeechRequest(
+                        text=text,
+                        language_code=language_code,
+                        encoding=ra.AudioEncoding.LINEAR_PCM,
+                        sample_rate_hz=sample_rate_hz,
+                        voice_name=language_code
+                    )
+                    response = self.tts_client.Synthesize(request)
+                    return response.audio
+                except Exception as retry_e:
+                    print(f"Retry also failed: {retry_e}")
+            
             return None
     
     def get_available_voices(self, language_code: str = "en-US") -> List[str]:

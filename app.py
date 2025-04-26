@@ -60,15 +60,99 @@ default_client = RivaClient(RIVA_SERVER)
 # Store active streaming sessions
 active_sessions = {}
 
-# Add TTS voice options with simplified names matching Riva's expectation
+# Add TTS voice options - will be updated from the server
 VOICES = {
-    "en-US": ["en-US"],  # Simplified voice name
-    "en-GB": ["en-GB"],
-    "es-ES": ["es-ES"],
-    "es-US": ["es-US"],
-    "de-DE": ["de-DE"],
-    "fr-FR": ["fr-FR"]
+    "en-US": ["en-US-Female-1"],  # Default value, will be updated
 }
+
+def query_available_tts_voices():
+    """
+    Query the Riva server for available TTS voices and models.
+    Updates the global VOICES dictionary.
+    """
+    global VOICES
+    
+    try:
+        # Create a new connection to the Riva server
+        riva = RivaClient(RIVA_SERVER)
+        
+        # Get available TTS models from server configuration
+        tts_config_response = None
+        
+        try:
+            # Attempt to query the RivaSynthesis config if available
+            if hasattr(riva.tts_client, 'GetRivaSynthesisConfig'):
+                config_request = rtts.RivaSynthesisConfigRequest()
+                tts_config_response = riva.tts_client.GetRivaSynthesisConfig(config_request)
+        except Exception as e:
+            print(f"Error querying TTS config: {e}")
+        
+        # Initialize voices dictionary
+        voices_dict = {}
+        
+        # If config response is available, extract voice information
+        if tts_config_response:
+            for model_config in tts_config_response.model_config:
+                for param in model_config.parameters:
+                    if param.key == "supported_languages":
+                        langs = param.value.split(",")
+                        for lang in langs:
+                            lang = lang.strip()
+                            if lang not in voices_dict:
+                                voices_dict[lang] = []
+                            # Add this model as a voice option
+                            voice_name = f"{model_config.model_name}-{lang}"
+                            if voice_name not in voices_dict[lang]:
+                                voices_dict[lang].append(voice_name)
+        
+        # If no voices were found through config, use a simpler approach
+        if not voices_dict:
+            # Try simple test synthesis with each TTS model and language combination
+            for lang in TTS_MODELS.get("fastpitch_hifigan", ["en-US"]):
+                if lang not in voices_dict:
+                    voices_dict[lang] = []
+                
+                # Try different voice name formats
+                test_voices = [
+                    lang,  # Simple format: "en-US"
+                    f"{lang.split('-')[0]}-{lang}",  # e.g., "en-en-US"
+                    f"{lang}-FastPitch"  # e.g., "en-US-FastPitch"
+                ]
+                
+                for voice in test_voices:
+                    try:
+                        # Try a quick synthesis test with minimal text
+                        audio = riva.synthesize_speech(
+                            text="Test", 
+                            language_code=lang, 
+                            voice_name=voice
+                        )
+                        if audio:
+                            # This voice works, add it to the dictionary
+                            if voice not in voices_dict[lang]:
+                                voices_dict[lang].append(voice)
+                            break
+                    except Exception as e:
+                        print(f"Voice {voice} for {lang} not available: {e}")
+        
+        # Update the global VOICES dictionary
+        if voices_dict:
+            VOICES = voices_dict
+            print(f"Updated voices: {VOICES}")
+        
+    except Exception as e:
+        print(f"Error querying TTS voices: {e}")
+    
+    # Ensure every language in TTS_MODELS has at least one voice option
+    for model, langs in TTS_MODELS.items():
+        for lang in langs:
+            if lang not in VOICES or not VOICES[lang]:
+                VOICES[lang] = [lang]  # Use language code as fallback voice name
+    
+    return VOICES
+
+# Call once at startup to populate voices
+query_available_tts_voices()
 
 @app.route('/')
 def index():
@@ -359,6 +443,21 @@ def check_tts_available():
     """Check if TTS functionality is available."""
     return jsonify({'available': tts_available})
 
+@app.route('/tts/refresh_voices', methods=['POST'])
+def refresh_tts_voices():
+    """Force a refresh of available TTS voices."""
+    try:
+        voices = query_available_tts_voices()
+        return jsonify({
+            'success': True,
+            'voices': voices
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        })
+
 @app.route('/tts/voices', methods=['GET'])
 def get_tts_voices():
     """Get available TTS voices for a language."""
@@ -371,18 +470,17 @@ def get_tts_voices():
     
     language = request.args.get('language', 'en-US')
     
-    try:
-        voices = default_client.get_available_voices(language)
-        return jsonify({
-            'voices': voices,
-            'default_voice': voices[0] if voices else None
-        })
-    except Exception as e:
-        return jsonify({
-            'voices': VOICES.get(language, []),
-            'default_voice': VOICES.get(language, [])[0] if VOICES.get(language, []) else None,
-            'error': str(e)
-        })
+    # Return the pre-queried voices from our global dictionary
+    voices = VOICES.get(language, [])
+    if not voices and language in TTS_MODELS.get("fastpitch_hifigan", []):
+        # Fallback: Use language code as voice name
+        voices = [language]
+        VOICES[language] = voices
+    
+    return jsonify({
+        'voices': voices,
+        'default_voice': voices[0] if voices else None
+    })
 
 @app.route('/tts/synthesize', methods=['POST'])
 def synthesize_speech():
@@ -397,10 +495,13 @@ def synthesize_speech():
     
     text = data['text']
     language = data.get('language', 'en-US')
-    voice = data.get('voice', VOICES.get(language, [])[0] if VOICES.get(language, []) else "English-US-Female-1")
+    
+    # Get voice for this language from our global dictionary
+    voices = VOICES.get(language, [language])  # Fallback to language code as voice
+    voice = data.get('voice', voices[0] if voices else language)
     
     try:
-        # Generate audio using default_client instead of undefined riva_client
+        # Generate audio
         audio_data = default_client.synthesize_speech(
             text=text,
             language_code=language,

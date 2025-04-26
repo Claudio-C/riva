@@ -56,6 +56,11 @@
                 </ol>
             </div>
             <div id="ttsControls" style="{{ '' if tts_available else 'display:none' }}">
+                <div class="admin-controls">
+                    <button id="refreshVoices" class="admin-button" aria-controls="ttsVoice">
+                        Refresh Available Voices
+                    </button>
+                </div>
                 <div class="form-group">
                     <label for="ttsVoice">Voice:</label>
                     <select id="ttsVoice" aria-describedby="voiceHelp">

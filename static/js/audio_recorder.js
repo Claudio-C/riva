@@ -425,6 +425,36 @@ document.addEventListener('DOMContentLoaded', function() {
         // If TTS is not available, don't set up handlers
         if (!ttsVoiceSelect || !ttsSynthesizeBtn) return;
         
+        // Add refresh voices functionality
+        const refreshVoicesBtn = document.getElementById('refreshVoices');
+        if (refreshVoicesBtn) {
+            refreshVoicesBtn.addEventListener('click', function() {
+                refreshVoicesBtn.disabled = true;
+                refreshVoicesBtn.textContent = 'Refreshing...';
+                
+                fetch('/tts/refresh_voices', {
+                    method: 'POST',
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        // Reload voices for the current language
+                        loadTtsVoices(currentLanguage);
+                        ttsStatus.textContent = 'Voices refreshed successfully';
+                    } else {
+                        ttsStatus.textContent = `Error refreshing voices: ${data.error}`;
+                    }
+                })
+                .catch(error => {
+                    ttsStatus.textContent = `Error: ${error.message}`;
+                })
+                .finally(() => {
+                    refreshVoicesBtn.disabled = false;
+                    refreshVoicesBtn.textContent = 'Refresh Available Voices';
+                });
+            });
+        }
+        
         // Handle TTS synthesis
         ttsSynthesizeBtn.addEventListener('click', function() {
             const text = ttsTextArea.value.trim();
