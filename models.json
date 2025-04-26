@@ -5,7 +5,9 @@
     "conformer-streaming-throughput": ["en-US"]
   },
   "tts_models": {
-    "fastpitch_hifigan": ["en-US"]
+    "fastpitch_hifigan": ["en-US", "es-ES", "es-US", "it-IT", "de-DE", "zh-CN"],
+    "magpie": ["multi"],
+    "radtts_hifigan": ["en-US"]
   },
   "default_asr_model": "conformer-streaming",
   "default_asr_language": "en-US",

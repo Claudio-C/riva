@@ -52,6 +52,8 @@ TTS_MODELS = {
 # Default model and language selections
 DEFAULT_ASR_MODEL = "conformer"
 DEFAULT_ASR_LANGUAGE = "en-US"
+DEFAULT_TTS_MODEL = "fastpitch_hifigan"  # Add this line
+DEFAULT_TTS_LANGUAGE = "en-US"  # Add this line
 
 # Create a dictionary to store client instances per model/language combo
 riva_clients = {}
