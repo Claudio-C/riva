@@ -8,6 +8,7 @@ import time
 import ssl
 import queue
 import io
+import wave
 from riva_client import RivaClient, tts_available
 
 app = Flask(__name__, static_folder='static', template_folder='templates')
@@ -366,7 +367,8 @@ def get_tts_voices():
     language = request.args.get('language', 'en-US')
     
     try:
-        voices = riva_client.get_available_voices(language)
+        # Use default_client instead of undefined riva_client
+        voices = default_client.get_available_voices(language)
         return jsonify({
             'voices': voices,
             'default_voice': voices[0] if voices else None
@@ -394,8 +396,8 @@ def synthesize_speech():
     voice = data.get('voice', VOICES.get(language, [])[0] if VOICES.get(language, []) else "English-US-Female-1")
     
     try:
-        # Generate audio
-        audio_data = riva_client.synthesize_speech(
+        # Generate audio using default_client instead of undefined riva_client
+        audio_data = default_client.synthesize_speech(
             text=text,
             language_code=language,
             voice_name=voice
@@ -457,7 +459,8 @@ def stream_tts():
     
     def generate():
         try:
-            for audio_chunk in riva_client.stream_synthesize_speech(
+            # Use default_client instead of undefined riva_client
+            for audio_chunk in default_client.stream_synthesize_speech(
                 text=text,
                 language_code=language,
                 voice_name=voice
