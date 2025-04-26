@@ -334,7 +334,7 @@ class RivaClient:
                 text=text,
                 language_code=language_code,
                 encoding=ra.AudioEncoding.LINEAR_PCM,
-                sample_rate_hertz=sample_rate_hz,
+                sample_rate_hz=sample_rate_hz,  # Changed from sample_rate_hertz to sample_rate_hz
                 voice_name=voice_name
             )
             
@@ -405,7 +405,7 @@ class RivaClient:
                 text=text,
                 language_code=language_code,
                 encoding=ra.AudioEncoding.LINEAR_PCM,
-                sample_rate_hertz=sample_rate_hz,
+                sample_rate_hz=sample_rate_hz,  # Changed from sample_rate_hertz to sample_rate_hz
                 voice_name=voice_name
             )
             
