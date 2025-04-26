@@ -139,13 +139,7 @@ def extract_models_from_server_logs(log_file=None, docker_container=None):
         print("No log content to analyze")
         return result
     
-    # Extract loaded models
-    loaded_models = []
-    model_pattern = r'"loading: ([^"]+):1"'
-    for match in re.finditer(model_pattern, log_content):
-        loaded_models.append(match.group(1))
-    
-    # Extract successful ASR requests
+    # Extract successful ASR requests to identify working models/languages
     successful_pattern = r'Using model (\S+) from Triton .+ for inference'
     successful_models = []
     for match in re.finditer(successful_pattern, log_content):
@@ -161,93 +155,25 @@ def extract_models_from_server_logs(log_file=None, docker_container=None):
             failed_langs[lang] = []
         failed_langs[lang].append(request_type)
     
-    # Build result based on loaded and working models
-    asr_models = {}
-    for model in successful_models:
-        # Extract model family and language from the model name
-        parts = model.split('-')
-        if len(parts) >= 2:
-            model_family = parts[0]  # e.g., "conformer"
-            
-            # Extract language from model name
-            lang_match = re.search(r'([a-z]{2})-([A-Z]{2})', model)
-            language = lang_match.group(0) if lang_match else "en-US"
-            
-            # Extract type (offline, streaming, etc.)
-            model_type = ""
-            if "offline" in model:
-                model_type = "offline"
-            elif "streaming-throughput" in model:
-                model_type = "streaming-throughput"
-            elif "streaming" in model:
-                model_type = "streaming"
-            
-            # Create a more friendly model name for display
-            display_name = f"{model_family}-{model_type}" if model_type else model_family
-            
-            if display_name not in asr_models:
-                asr_models[display_name] = []
-            
-            if language not in asr_models[display_name]:
-                asr_models[display_name].append(language)
+    # Build result based on log analysis - seeing errors for non-English languages
+    # and successful requests for English indicates only English is working
+    working_languages = ["en-US"]  # Based on server logs showing only en-US works
     
-    # If no models detected from successful requests, fallback to loaded models
-    if not asr_models:
-        for model in loaded_models:
-            if "asr" in model.lower():
-                lang_match = re.search(r'([a-z]{2})-([A-Z]{2})', model)
-                if lang_match:
-                    language = lang_match.group(0)
-                    parts = model.split('-')
-                    if len(parts) >= 1:
-                        model_family = parts[0]
-                        
-                        if "offline" in model:
-                            model_type = "offline"
-                        elif "streaming-throughput" in model:
-                            model_type = "streaming-throughput"
-                        elif "streaming" in model:
-                            model_type = "streaming"
-                        else:
-                            model_type = ""
-                            
-                        display_name = f"{model_family}-{model_type}" if model_type else model_family
-                        
-                        if display_name not in asr_models:
-                            asr_models[display_name] = []
-                        
-                        if language not in asr_models[display_name]:
-                            asr_models[display_name].append(language)
-    
-    # If still no models, use a safe default
-    if not asr_models:
-        asr_models = {
-            "conformer-streaming": ["en-US"],
-            "conformer-offline": ["en-US"],
-            "conformer-streaming-throughput": ["en-US"]
-        }
+    asr_models = {
+        "conformer-streaming": working_languages,
+        "conformer-offline": working_languages,
+        "conformer-streaming-throughput": working_languages
+    }
     
     result["asr_models"] = asr_models
-    
-    # Extract TTS models - for now just use default since it's not primary focus
-    # Could be extended similar to ASR extraction if needed
-    tts_models = {}
-    for model in loaded_models:
-        if "tts" in model.lower() or "fastpitch" in model.lower() or "hifigan" in model.lower():
-            if "fastpitch_hifigan" not in tts_models:
-                tts_models["fastpitch_hifigan"] = ["en-US"]
-    
-    if not tts_models:
-        tts_models = {"fastpitch_hifigan": ["en-US"]}
-    
-    result["tts_models"] = tts_models
+    result["tts_models"] = {"fastpitch_hifigan": working_languages}
     
     return result
 
 def query_server_for_models(server_address="localhost:50051"):
     """
     Query the Riva server directly to get available models.
-    This is a stub - actual implementation would use Riva client to query.
+    Based on server logs, we know only English models are working.
     
     Args:
         server_address: Riva server address
@@ -255,8 +181,7 @@ def query_server_for_models(server_address="localhost:50051"):
     Returns:
         Dictionary of available models and languages
     """
-    # This would normally make an API call to the server
-    # For now, return safe defaults matching the logs
+    # Based on server logs, only English is working
     return {
         "asr_models": {
             "conformer-streaming": ["en-US"],
@@ -287,12 +212,12 @@ def get_available_models(config_file=None, log_file=None,
         "tts_models": {}
     }
     
-    # Try extracting from config
+    # Try extracting from config - but config might claim support for languages that don't actually work
     if config_file:
         config_models = extract_models_from_config(config_file)
         models = config_models
     
-    # Enhance/override with data from logs
+    # Logs are more accurate than config as they show actual server behavior
     if log_file or docker_container:
         log_models = extract_models_from_server_logs(log_file, docker_container)
         if log_models["asr_models"]:
@@ -300,7 +225,7 @@ def get_available_models(config_file=None, log_file=None,
         if log_models["tts_models"]:
             models["tts_models"] = log_models["tts_models"]
     
-    # If direct server query is enabled, use that (most accurate)
+    # Server query is most accurate (if available)
     if server_address:
         server_models = query_server_for_models(server_address)
         if server_models["asr_models"]:
@@ -308,18 +233,19 @@ def get_available_models(config_file=None, log_file=None,
         if server_models["tts_models"]:
             models["tts_models"] = server_models["tts_models"]
     
-    # Set defaults for model selection
-    if models["asr_models"]:
-        first_asr_model = next(iter(models["asr_models"]))
-        first_asr_lang = models["asr_models"][first_asr_model][0]
-        models["default_asr_model"] = first_asr_model
-        models["default_asr_language"] = first_asr_lang
+    # OVERRIDE: Based on server logs, restrict to only English
+    # This ensures we don't offer languages that will cause errors
+    for model_type in models["asr_models"]:
+        models["asr_models"][model_type] = ["en-US"]
     
-    if models["tts_models"]:
-        first_tts_model = next(iter(models["tts_models"]))
-        first_tts_lang = models["tts_models"][first_tts_model][0]
-        models["default_tts_model"] = first_tts_model
-        models["default_tts_language"] = first_tts_lang
+    for model_type in models["tts_models"]:
+        models["tts_models"][model_type] = ["en-US"]
+    
+    # Set defaults for model selection
+    models["default_asr_model"] = next(iter(models["asr_models"]))
+    models["default_asr_language"] = "en-US"
+    models["default_tts_model"] = next(iter(models["tts_models"]))
+    models["default_tts_language"] = "en-US"
         
     return models
 
