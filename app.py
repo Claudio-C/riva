@@ -329,7 +329,7 @@ def stream_audio(session_id):
             session['audio_queue'].put(request.data)
         except Exception as e:
             print(f"Error queuing audio chunk: {e}")
-            return jsonify({'error': f'Failed to process audio: {str(e)}')}), 500
+            return jsonify({'error': f'Failed to process audio: {str(e)}'}, 500)
     
     # Collect any new results
     try:
@@ -530,7 +530,7 @@ def synthesize_speech():
         })
         
     except Exception as e:
-        return jsonify({'error': f'TTS error: {str(e)}')}), 500
+        return jsonify({'error': f'TTS error: {str(e)}'}, 500)
 
 @app.route('/tts/audio/<filename>', methods=['GET'])
 def get_tts_audio(filename):
@@ -548,7 +548,7 @@ def get_tts_audio(filename):
             download_name=filename
         )
     except Exception as e:
-        return jsonify({'error': f'Error serving audio file: {str(e)}')}), 500
+        return jsonify({'error': f'Error serving audio file: {str(e)}'}), 500
 
 @app.route('/tts/stream', methods=['POST'])
 def stream_tts():
