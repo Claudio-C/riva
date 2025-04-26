@@ -383,7 +383,17 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Format voice name for display
     function formatVoiceName(voice) {
-        // Convert names like "English-US-Female-1" to "English Female 1"
+        // Handle simplified voice names (e.g. "en-US")
+        if (voice.indexOf('-') > 0 && voice.indexOf('Female') === -1 && voice.indexOf('Male') === -1) {
+            const parts = voice.split('-');
+            if (parts.length === 2) {
+                const language = parts[0].toUpperCase();
+                const region = parts[1];
+                return `${getLanguageName(language)} (${region})`;
+            }
+        }
+        
+        // Previous handling for voices with gender
         const parts = voice.split('-');
         if (parts.length >= 3) {
             const language = parts[0];
@@ -392,6 +402,23 @@ document.addEventListener('DOMContentLoaded', function() {
             return `${language} ${gender} ${number}`.trim();
         }
         return voice;
+    }
+    
+    // Helper function to get language name from code
+    function getLanguageName(code) {
+        const languages = {
+            'EN': 'English',
+            'ES': 'Spanish',
+            'FR': 'French',
+            'DE': 'German',
+            'IT': 'Italian',
+            'PT': 'Portuguese',
+            'ZH': 'Chinese',
+            'JA': 'Japanese',
+            'KO': 'Korean',
+            'RU': 'Russian'
+        };
+        return languages[code] || code;
     }
     
     function setupTtsHandlers() {

@@ -60,9 +60,14 @@ default_client = RivaClient(RIVA_SERVER)
 # Store active streaming sessions
 active_sessions = {}
 
-# Add TTS voice options
+# Add TTS voice options with simplified names matching Riva's expectation
 VOICES = {
-    "en-US": ["English-US-Female-1", "English-US-Male-1"]
+    "en-US": ["en-US"],  # Simplified voice name
+    "en-GB": ["en-GB"],
+    "es-ES": ["es-ES"],
+    "es-US": ["es-US"],
+    "de-DE": ["de-DE"],
+    "fr-FR": ["fr-FR"]
 }
 
 @app.route('/')
@@ -367,7 +372,6 @@ def get_tts_voices():
     language = request.args.get('language', 'en-US')
     
     try:
-        # Use default_client instead of undefined riva_client
         voices = default_client.get_available_voices(language)
         return jsonify({
             'voices': voices,

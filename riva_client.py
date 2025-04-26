@@ -310,7 +310,7 @@ class RivaClient:
     def synthesize_speech(self, 
                        text: str, 
                        language_code: str = "en-US",
-                       voice_name: str = "English-US-Female-1",
+                       voice_name: str = None,
                        sample_rate_hz: int = 22050) -> Optional[bytes]:
         """
         Synthesize speech from text using Riva TTS.
@@ -318,7 +318,7 @@ class RivaClient:
         Args:
             text: Text to synthesize
             language_code: Language code for synthesis
-            voice_name: Voice to use for synthesis
+            voice_name: Voice to use for synthesis (or None to use default)
             sample_rate_hz: Output audio sample rate
             
         Returns:
@@ -329,12 +329,17 @@ class RivaClient:
             return None
             
         try:
+            # If voice_name is None or contains "Female/Male", use just the language code
+            if voice_name is None or "Female" in voice_name or "Male" in voice_name:
+                # Use simplified voice name format that should work with Riva
+                voice_name = f"{language_code.split('-')[0]}-{language_code.split('-')[1]}"
+            
             # Create synthesis request
             request = rtts.SynthesizeSpeechRequest(
                 text=text,
                 language_code=language_code,
                 encoding=ra.AudioEncoding.LINEAR_PCM,
-                sample_rate_hz=sample_rate_hz,  # Changed from sample_rate_hertz to sample_rate_hz
+                sample_rate_hz=sample_rate_hz,
                 voice_name=voice_name
             )
             
@@ -360,9 +365,15 @@ class RivaClient:
         """
         if not self.tts_available:
             print("TTS functionality is not available")
-            return ["English-US-Female-1", "English-US-Male-1"]  # Default voices
+            return ["English-US"] # Simplified voice name
             
         try:
+            # Check if ListVoicesRequest is available
+            if not hasattr(rtts, 'ListVoicesRequest'):
+                print("ListVoicesRequest not available in proto")
+                # Return simplified voice name without gender specification
+                return [f"{language_code.split('-')[0]}-{language_code.split('-')[1]}"]
+                
             # Create request
             request = rtts.ListVoicesRequest(language_code=language_code)
             
@@ -374,13 +385,13 @@ class RivaClient:
             
         except Exception as e:
             print(f"Error getting available voices: {e}")
-            # Return default voices for English
-            return ["English-US-Female-1", "English-US-Male-1"]
+            # Return simplified voice name that matches Riva's expectation
+            return [f"{language_code.split('-')[0]}-{language_code.split('-')[1]}"]
     
     def stream_synthesize_speech(self, 
                               text: str, 
                               language_code: str = "en-US",
-                              voice_name: str = "English-US-Female-1",
+                              voice_name: str = None,
                               sample_rate_hz: int = 22050) -> Generator[bytes, None, None]:
         """
         Stream synthesized speech from text using Riva TTS.
@@ -388,7 +399,7 @@ class RivaClient:
         Args:
             text: Text to synthesize
             language_code: Language code for synthesis
-            voice_name: Voice to use for synthesis
+            voice_name: Voice to use for synthesis (or None to use default)
             sample_rate_hz: Output audio sample rate
             
         Yields:
@@ -400,12 +411,17 @@ class RivaClient:
             return
         
         try:
+            # If voice_name is None or contains "Female/Male", use just the language code
+            if voice_name is None or "Female" in voice_name or "Male" in voice_name:
+                # Use simplified voice name format that should work with Riva
+                voice_name = f"{language_code.split('-')[0]}-{language_code.split('-')[1]}"
+            
             # Create synthesis request
             request = rtts.SynthesizeSpeechRequest(
                 text=text,
                 language_code=language_code,
                 encoding=ra.AudioEncoding.LINEAR_PCM,
-                sample_rate_hz=sample_rate_hz,  # Changed from sample_rate_hertz to sample_rate_hz
+                sample_rate_hz=sample_rate_hz,
                 voice_name=voice_name
             )
             
