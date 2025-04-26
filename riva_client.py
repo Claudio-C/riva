@@ -353,21 +353,37 @@ class RivaClient:
         except Exception as e:
             print(f"Error in Riva synthesize_speech: {e}")
             
-            # If specified voice failed, try language code as voice name
+            # If voice name has uppercase, try lowercase version
+            if voice_name != voice_name.lower() and voice_name != language_code:
+                print(f"Retrying with lowercase voice: '{voice_name.lower()}'")
+                try:
+                    lower_request = rtts.SynthesizeSpeechRequest(
+                        text=text,
+                        language_code=language_code,
+                        encoding=ra.AudioEncoding.LINEAR_PCM,
+                        sample_rate_hz=sample_rate_hz,
+                        voice_name=voice_name.lower()
+                    )
+                    response = self.tts_client.Synthesize(lower_request)
+                    return response.audio
+                except Exception as e2:
+                    print(f"Lowercase retry failed: {e2}")
+            
+            # If specified voice failed and it's not already the language code, try language code as voice name
             if voice_name != language_code:
                 print(f"Retrying with voice name = language code: '{language_code}'")
                 try:
-                    request = rtts.SynthesizeSpeechRequest(
+                    lang_request = rtts.SynthesizeSpeechRequest(
                         text=text,
                         language_code=language_code,
                         encoding=ra.AudioEncoding.LINEAR_PCM,
                         sample_rate_hz=sample_rate_hz,
                         voice_name=language_code
                     )
-                    response = self.tts_client.Synthesize(request)
+                    response = self.tts_client.Synthesize(lang_request)
                     return response.audio
-                except Exception as retry_e:
-                    print(f"Retry also failed: {retry_e}")
+                except Exception as e3:
+                    print(f"Language code retry also failed: {e3}")
             
             return None
     

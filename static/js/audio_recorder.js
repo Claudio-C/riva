@@ -455,6 +455,37 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         }
         
+        // Add test voices functionality
+        const testVoicesBtn = document.getElementById('testVoices');
+        if (testVoicesBtn) {
+            testVoicesBtn.addEventListener('click', function() {
+                testVoicesBtn.disabled = true;
+                testVoicesBtn.textContent = 'Testing Voices...';
+                ttsStatus.textContent = 'Testing voice configurations, please wait...';
+                
+                fetch('/tts/test_voices', {
+                    method: 'POST',
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        // Reload voices for the current language
+                        loadTtsVoices(currentLanguage);
+                        ttsStatus.textContent = 'Voice configuration testing complete. Try synthesizing text now.';
+                    } else {
+                        ttsStatus.textContent = `Error testing voices: ${data.error}`;
+                    }
+                })
+                .catch(error => {
+                    ttsStatus.textContent = `Error: ${error.message}`;
+                })
+                .finally(() => {
+                    testVoicesBtn.disabled = false;
+                    testVoicesBtn.textContent = 'Test Available Voices';
+                });
+            });
+        }
+        
         // Handle TTS synthesis
         ttsSynthesizeBtn.addEventListener('click', function() {
             const text = ttsTextArea.value.trim();
