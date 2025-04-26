@@ -423,7 +423,7 @@ def synthesize_speech():
         })
         
     except Exception as e:
-        return jsonify({'error': f'TTS error: {str(e)}')}), 500
+        return jsonify({'error': f'TTS error: {str(e)}'}), 500
 
 @app.route('/tts/audio/<filename>', methods=['GET'])
 def get_tts_audio(filename):
